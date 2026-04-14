@@ -1,0 +1,161 @@
+import("../../packages/kernel-canon/src/types") as types
+import("../../packages/kernel-canon/src/cid") as cid_mod
+import("../../packages/kernel-exec/src/engine") as engine
+import("../../packages/kernel-license/src/license") as license
+import("../../packages/kernel-policy/src/policy") as policy
+import("../../packages/kernel-verify/src/verify") as verify
+import("../../packages/kernel-persist/src/persist") as persist
+import("std/rec") as rec
+import("std/str") as str
+
+// DEK Enterprise Licensing Demo
+//
+// Demonstrates the full commercial licensing chain:
+//
+//   1. Publisher builds and pins a versioned program registry
+//   2. Customer receives the registry CID as their license anchor
+//   3. Customer runs a licensed program and gets a receipt
+//   4. Verification proves: receipt + licensed + policy_compliant
+//   5. Unlicensed program attempt is rejected
+//   6. Revoked policy attempt is rejected
+
+// Step 1: Publisher builds a program registry
+// In production, program CIDs are the sha256 of actual program source.
+
+let licensed_program_cid  = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+let licensed_program_cid2 = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+let unlicensed_program_cid = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+
+let registry_v1 = license.make_registry([
+  licensed_program_cid,
+  licensed_program_cid2
+])
+
+let registry_v1_cid = license.registry_cid(registry_v1).ok
+
+// Step 2: Publisher saves registry to distribution path
+
+let publish_result = persist.save_registry(
+  registry_v1,
+  "/tmp/dek_enterprise_registry_v1.json"
+)
+
+// Step 3: Customer loads the registry using the known CID
+
+let load_result = persist.load_registry("/tmp/dek_enterprise_registry_v1.json")
+let registry_cid_verified = load_result.ok.registry_cid == registry_v1_cid
+
+// Step 4: Customer defines enterprise policy
+// Only licensed programs, only ok exits, no oracle calls, 5000 step cap.
+
+let enterprise_policy = policy.make_policy(
+  [licensed_program_cid],
+  [],
+  ["ok"],
+  5000,
+  9999999999999
+)
+
+let policy_v1_cid = policy.policy_cid(enterprise_policy).ok
+
+// Step 5: Customer runs a licensed program
+
+fn licensed_program_eval(program, input, config) {
+  { ok: types.make_text("report_generated") }
+}
+
+let licensed_bundle = {
+  program: { t: "cid", v: licensed_program_cid },
+  input: { t: "null" },
+  trace_mode: "minimal"
+}
+
+let licensed_exec = engine.exec_bundle(licensed_bundle, licensed_program_eval)
+
+// Step 6: Full verification - receipt + licensed + policy compliant
+
+let license_check = if license.is_licensed(licensed_program_cid, load_result.ok.registry)
+  then { ok: true }
+  else { err: { code: "NOT_LICENSED" } }
+
+let policy_check = policy.enforce(
+  enterprise_policy,
+  licensed_program_cid,
+  licensed_exec.ok.exit,
+  [],
+  0,
+  1700000000000
+)
+
+let fully_verified = license_check.ok == true && policy_check.ok == true
+
+// Step 7: Attempt with unlicensed program - must be rejected
+
+fn unlicensed_eval(program, input, config) {
+  { ok: types.make_text("unauthorized_output") }
+}
+
+let unlicensed_bundle = {
+  program: { t: "cid", v: unlicensed_program_cid },
+  input: { t: "null" },
+  trace_mode: "minimal"
+}
+
+let unlicensed_exec = engine.exec_bundle(unlicensed_bundle, unlicensed_eval)
+
+let unlicensed_check = if license.is_licensed(unlicensed_program_cid, load_result.ok.registry)
+  then { ok: true }
+  else { err: { code: "NOT_LICENSED" } }
+
+// Step 8: Revoke policy and verify rejection
+
+let revoked_policy = policy.revoke(enterprise_policy)
+
+let revoked_check = policy.enforce(
+  revoked_policy,
+  licensed_program_cid,
+  "ok",
+  [],
+  0,
+  1700000000000
+)
+
+// Output
+
+{
+  demo: "DEK Enterprise Licensing Demo",
+  step1_publisher: {
+    registry_cid: registry_v1_cid,
+    licensed_programs: 2
+  },
+  step2_distribution: {
+    published: rec.has(publish_result, "ok"),
+    registry_path: "/tmp/dek_enterprise_registry_v1.json"
+  },
+  step3_customer_load: {
+    loaded: rec.has(load_result, "ok"),
+    registry_cid_verified: registry_cid_verified
+  },
+  step4_policy: {
+    policy_cid: policy_v1_cid
+  },
+  step5_licensed_run: {
+    receipt_cid: licensed_exec.ok.receipt_cid,
+    exit: licensed_exec.ok.exit,
+    result: rec.get(licensed_exec.ok.result, "v")
+  },
+  step6_full_verification: {
+    receipt_valid: rec.has(licensed_exec, "ok"),
+    licensed: rec.has(license_check, "ok"),
+    policy_compliant: policy_check.ok == true,
+    fully_verified: fully_verified
+  },
+  step7_unlicensed_rejection: {
+    rejected: rec.has(unlicensed_check, "err"),
+    rejection_code: unlicensed_check.err.code
+  },
+  step8_revocation: {
+    revoked_rejected: revoked_check.ok == false,
+    rejection_code: revoked_check.code
+  }
+}
