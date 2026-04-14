@@ -7,5 +7,7 @@
   make_bytes: fn(bs) { { t: "bytes", v: bs } },
   make_list: fn(xs) { { t: "list", v: xs } },
   make_record: fn(entries) { { t: "record", v: entries } },
-  make_cid: fn(cid) { { t: "cid", v: cid } }
+  make_cid: fn(cid) { { t: "cid", v: cid } },
+  make_set: fn(xs) { { t: "set", v: xs } },
+  make_map: fn(entries) { { t: "map", v: entries } }
 }

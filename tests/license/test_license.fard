@@ -1,0 +1,94 @@
+import("../../packages/kernel-license/src/license") as license
+import("std/rec") as rec
+import("std/str") as str
+
+let known_run_id = "sha256:9009f58955db43ac3ba6bb3e2e27d8d70c1c20bad557bd39e084563148098f1e"
+let unknown_run_id = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+let program_a = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+let program_b = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+let registry_with_a = license.make_registry([program_a])
+let registry_with_ab = license.make_registry([program_a, program_b])
+let empty_registry = license.make_registry([])
+
+test "make_registry returns set canonical value" {
+  registry_with_a.t == "set"
+}
+
+test "make_registry has v field" {
+  registry_with_a.v != null
+}
+
+test "registry_cid returns sha256: string" {
+  let r = license.registry_cid(registry_with_a) in
+  str.starts_with(r.ok, "sha256:")
+}
+
+test "same registry same cid" {
+  let a = license.registry_cid(registry_with_a) in
+  let b = license.registry_cid(registry_with_a) in
+  a.ok == b.ok
+}
+
+test "different registry different cid" {
+  let a = license.registry_cid(registry_with_a) in
+  let b = license.registry_cid(registry_with_ab) in
+  a.ok != b.ok
+}
+
+test "is_licensed true for program in registry" {
+  license.is_licensed(program_a, registry_with_a)
+}
+
+test "is_licensed false for program not in registry" {
+  !license.is_licensed(program_b, registry_with_a)
+}
+
+test "is_licensed false for empty registry" {
+  !license.is_licensed(program_a, empty_registry)
+}
+
+test "is_licensed true for second program in registry" {
+  license.is_licensed(program_b, registry_with_ab)
+}
+
+test "verify_licensed ok for known run_id and licensed program" {
+  let r = license.verify_licensed(known_run_id, program_a, registry_with_a) in
+  rec.has(r, "ok")
+}
+
+test "verify_licensed ok contains run_id" {
+  let r = license.verify_licensed(known_run_id, program_a, registry_with_a) in
+  r.ok.run_id == known_run_id
+}
+
+test "verify_licensed ok contains registry_cid" {
+  let r = license.verify_licensed(known_run_id, program_a, registry_with_a) in
+  str.starts_with(r.ok.registry_cid, "sha256:")
+}
+
+test "verify_licensed err for unlicensed program" {
+  let r = license.verify_licensed(known_run_id, program_b, registry_with_a) in
+  rec.has(r, "err") && r.err.code == "NOT_LICENSED"
+}
+
+test "verify_licensed err for unknown run_id" {
+  let r = license.verify_licensed(unknown_run_id, program_a, registry_with_a) in
+  rec.has(r, "err") && r.err.code == "RECEIPT_NOT_FOUND"
+}
+
+test "verify_licensed_chain ok for known run_id and licensed program" {
+  let r = license.verify_licensed_chain(known_run_id, program_a, registry_with_a) in
+  rec.has(r, "ok")
+}
+
+test "verify_licensed_chain ok has chain_depth" {
+  let r = license.verify_licensed_chain(known_run_id, program_a, registry_with_a) in
+  r.ok.chain_depth >= 1
+}
+
+test "verify_licensed_chain err for unlicensed program" {
+  let r = license.verify_licensed_chain(known_run_id, program_b, registry_with_a) in
+  rec.has(r, "err") && r.err.code == "NOT_LICENSED"
+}

@@ -1,0 +1,72 @@
+import("../../kernel-verify/src/verify") as verify
+import("../../kernel-canon/src/cid") as cid_mod
+import("../../kernel-canon/src/types") as types
+import("std/rec") as rec
+import("std/list") as list
+import("std/str") as str
+
+// A license registry is a canonical set of approved program CIDs.
+// The registry itself is content-addressed so you can pin a specific version.
+//
+// registry shape:
+//   { t: "set", v: [{ t: "text", v: "sha256:..." }, ...] }
+
+fn make_registry(program_cids) {
+  types.make_set(list.map(program_cids, fn(c) { types.make_text(c) }))
+}
+
+fn registry_cid(registry) {
+  cid_mod.cid_of(registry)
+}
+
+fn is_licensed(program_cid, registry) {
+  let items = rec.get(registry, "v") in
+  if items == null then false else
+  list.any(items, fn(item) {
+    rec.get(item, "v") == program_cid
+  })
+}
+
+// verify_licensed(run_id, registry)
+//
+// Verifies:
+//   1. The receipt exists and is valid
+//   2. The receipt's output was ok (not an error run)
+//   3. The program that produced it is in the registry
+//
+// Returns:
+//   { ok: { run_id, program_cid, registry_cid } }
+//   { err: { code, message, run_id } }
+
+fn verify_licensed(run_id, program_cid, registry) {
+  let r = verify.verify_receipt(run_id) in
+  if !rec.has(r, "ok") then
+    { err: { code: "RECEIPT_NOT_FOUND", message: r.err.message, run_id: run_id } }
+  else if !is_licensed(program_cid, registry) then
+    { err: { code: "NOT_LICENSED", message: str.concat("program CID not in registry: ", program_cid), run_id: run_id, program_cid: program_cid } }
+  else
+    let rcid = registry_cid(registry) in
+    { ok: { run_id: run_id, program_cid: program_cid, registry_cid: rcid.ok } }
+}
+
+// verify_licensed_chain(run_id, program_cid, registry)
+//
+// Same as verify_licensed but also walks the full receipt chain.
+
+fn verify_licensed_chain(run_id, program_cid, registry) {
+  let l = verify_licensed(run_id, program_cid, registry) in
+  if !rec.has(l, "ok") then l else
+  let c = verify.verify_chain(run_id) in
+  if !rec.has(c, "ok") then
+    { err: { code: "CHAIN_BROKEN", message: "receipt chain verification failed", run_id: run_id } }
+  else
+    { ok: { run_id: run_id, program_cid: program_cid, registry_cid: l.ok.registry_cid, chain_depth: c.ok.depth } }
+}
+
+{
+  make_registry: make_registry,
+  registry_cid: registry_cid,
+  is_licensed: is_licensed,
+  verify_licensed: verify_licensed,
+  verify_licensed_chain: verify_licensed_chain
+}
