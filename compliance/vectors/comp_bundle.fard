@@ -1,0 +1,98 @@
+import("../../packages/kernel-bundle/src/validate") as validate
+import("std/rec") as rec
+
+// DEK v1 Compliance: Bundle Validation
+
+test "COMP-BUNDLE-001: minimal valid bundle passes" {
+  let r = validate.validate_bundle({
+    program: { t: "text", v: "42" },
+    input: { t: "null" },
+    trace_mode: "full"
+  }) in
+  r.ok == true
+}
+
+test "COMP-BUNDLE-002: trace_mode minimal passes" {
+  let r = validate.validate_bundle({
+    program: { t: "text", v: "x" },
+    input: { t: "null" },
+    trace_mode: "minimal"
+  }) in
+  r.ok == true
+}
+
+test "COMP-BUNDLE-003: trace_mode none passes" {
+  let r = validate.validate_bundle({
+    program: { t: "text", v: "x" },
+    input: { t: "null" },
+    trace_mode: "none"
+  }) in
+  r.ok == true
+}
+
+test "COMP-BUNDLE-004: cid program passes" {
+  let r = validate.validate_bundle({
+    program: { t: "cid", v: "sha256:6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d" },
+    input: { t: "null" },
+    trace_mode: "full"
+  }) in
+  r.ok == true
+}
+
+test "COMP-BUNDLE-005: missing program fails with MISSING_FIELD" {
+  let r = validate.validate_bundle({ input: { t: "null" }, trace_mode: "full" }) in
+  r.ok == false && r.code == "MISSING_FIELD"
+}
+
+test "COMP-BUNDLE-006: missing input fails with MISSING_FIELD" {
+  let r = validate.validate_bundle({ program: { t: "text", v: "x" }, trace_mode: "full" }) in
+  r.ok == false && r.code == "MISSING_FIELD"
+}
+
+test "COMP-BUNDLE-007: missing trace_mode fails with MISSING_FIELD" {
+  let r = validate.validate_bundle({ program: { t: "text", v: "x" }, input: { t: "null" } }) in
+  r.ok == false && r.code == "MISSING_FIELD"
+}
+
+test "COMP-BUNDLE-008: invalid trace_mode fails with INVALID_FIELD" {
+  let r = validate.validate_bundle({
+    program: { t: "text", v: "x" },
+    input: { t: "null" },
+    trace_mode: "verbose"
+  }) in
+  r.ok == false && r.code == "INVALID_FIELD"
+}
+
+test "COMP-BUNDLE-009: invalid program type fails with INVALID_FIELD" {
+  let r = validate.validate_bundle({
+    program: { t: "int", v: 42 },
+    input: { t: "null" },
+    trace_mode: "full"
+  }) in
+  r.ok == false && r.code == "INVALID_FIELD"
+}
+
+test "COMP-BUNDLE-010: valid deps pass" {
+  let r = validate.validate_bundle({
+    program: { t: "text", v: "x" },
+    input: { t: "null" },
+    trace_mode: "full",
+    deps: [{ name: "mylib", cid: "sha256:abc" }]
+  }) in
+  r.ok == true
+}
+
+test "COMP-BUNDLE-011: dep missing cid fails with INVALID_FIELD" {
+  let r = validate.validate_bundle({
+    program: { t: "text", v: "x" },
+    input: { t: "null" },
+    trace_mode: "full",
+    deps: [{ name: "mylib" }]
+  }) in
+  r.ok == false && r.code == "INVALID_FIELD"
+}
+
+test "COMP-BUNDLE-012: failure phase is bundle.validate" {
+  let r = validate.validate_bundle({ input: { t: "null" }, trace_mode: "full" }) in
+  r.phase == "bundle.validate"
+}

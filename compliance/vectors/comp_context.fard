@@ -1,0 +1,65 @@
+import("../../packages/kernel-context/src/context") as ctx
+import("std/rec") as rec
+import("std/str") as str
+
+// DEK v1 Compliance: Context Integrity
+
+let msg_sys  = ctx.make_message("system", "You are helpful.")
+let msg_user = ctx.make_message("user", "Hello.")
+let msg_asst = ctx.make_message("assistant", "Hi!")
+
+let sample = ctx.make_context([msg_sys.ok, msg_user.ok, msg_asst.ok], "claude-3", 3)
+
+test "COMP-CTX-001: make_message ok for system role" {
+  rec.has(msg_sys, "ok")
+}
+
+test "COMP-CTX-002: make_message ok for user role" {
+  rec.has(msg_user, "ok")
+}
+
+test "COMP-CTX-003: make_message ok for assistant role" {
+  rec.has(msg_asst, "ok")
+}
+
+test "COMP-CTX-004: make_message err for invalid role" {
+  let r = ctx.make_message("robot", "hello") in
+  rec.has(r, "err") && r.err.code == "INVALID_ROLE"
+}
+
+test "COMP-CTX-005: context is canonical record" {
+  sample.t == "record"
+}
+
+test "COMP-CTX-006: context cid starts with sha256:" {
+  str.starts_with(ctx.context_cid(sample).ok, "sha256:")
+}
+
+test "COMP-CTX-007: same context same cid" {
+  ctx.context_cid(sample).ok == ctx.context_cid(sample).ok
+}
+
+test "COMP-CTX-008: different context different cid" {
+  let other = ctx.make_context([msg_user.ok], "claude-3", 1) in
+  ctx.context_cid(sample).ok != ctx.context_cid(other).ok
+}
+
+test "COMP-CTX-009: truncation_check ok when unchanged" {
+  let cid = ctx.context_cid(sample).ok in
+  let r = ctx.truncation_check(cid, sample) in
+  rec.has(r, "ok") && r.ok.verified == true
+}
+
+test "COMP-CTX-010: truncation_check err when modified" {
+  let orig_cid = ctx.context_cid(sample).ok in
+  let modified = ctx.make_context([msg_user.ok], "claude-3", 1) in
+  let r = ctx.truncation_check(orig_cid, modified) in
+  rec.has(r, "err") && r.err.code == "CONTEXT_MODIFIED"
+}
+
+test "COMP-CTX-011: truncation_check err has original and current cids" {
+  let orig_cid = ctx.context_cid(sample).ok in
+  let modified = ctx.make_context([msg_user.ok], "claude-3", 1) in
+  let r = ctx.truncation_check(orig_cid, modified) in
+  r.err.original == orig_cid && r.err.current != orig_cid
+}

@@ -1,0 +1,59 @@
+import("../../packages/kernel-witness/src/receipt") as receipt
+import("std/rec") as rec
+import("std/str") as str
+
+// DEK v1 Compliance: Receipt Formation
+
+let r0 = receipt.make_receipt(
+  "sha256:aaaa", "sha256:bbbb", "sha256:cccc", "sha256:dddd",
+  "ok", "fard-0.5",
+  null, null, null, null, null
+)
+
+test "COMP-RECEIPT-001: receipt has type receipt" {
+  r0.t == "receipt"
+}
+
+test "COMP-RECEIPT-002: receipt has v field" {
+  r0.v != null
+}
+
+test "COMP-RECEIPT-003: receipt_cid returns sha256: string" {
+  str.starts_with(receipt.receipt_cid(r0).ok, "sha256:")
+}
+
+test "COMP-RECEIPT-004: same receipt same cid" {
+  receipt.receipt_cid(r0).ok == receipt.receipt_cid(r0).ok
+}
+
+test "COMP-RECEIPT-005: different exit different cid" {
+  let r_err = receipt.make_receipt(
+    "sha256:aaaa", "sha256:bbbb", "sha256:cccc", "sha256:dddd",
+    "err", "fard-0.5", null, null, null, null, null
+  ) in
+  receipt.receipt_cid(r0).ok != receipt.receipt_cid(r_err).ok
+}
+
+test "COMP-RECEIPT-006: exit ok is valid" {
+  receipt.is_valid_exit("ok")
+}
+
+test "COMP-RECEIPT-007: exit err is valid" {
+  receipt.is_valid_exit("err")
+}
+
+test "COMP-RECEIPT-008: exit abort is valid" {
+  receipt.is_valid_exit("abort")
+}
+
+test "COMP-RECEIPT-009: unknown exit is invalid" {
+  !receipt.is_valid_exit("success")
+}
+
+test "COMP-RECEIPT-010: receipt with parent digest chains" {
+  let r = receipt.make_receipt(
+    "sha256:aaaa", "sha256:bbbb", "sha256:cccc", "sha256:dddd",
+    "ok", "fard-0.5", null, null, null, 100, "sha256:parent"
+  ) in
+  r.t == "receipt"
+}

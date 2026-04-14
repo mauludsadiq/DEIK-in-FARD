@@ -1,0 +1,61 @@
+import("../../packages/kernel-canon/src/cid") as cid
+import("../../packages/kernel-canon/src/types") as types
+import("std/rec") as rec
+import("std/str") as str
+
+// DEK v1 Compliance: Content Addressing
+// These CID values are normative. Any conforming implementation must produce
+// exactly these CIDs for these canonical values.
+
+test "COMP-CID-001: cid of null is stable" {
+  cid.cid_of({ t: "null" }).ok == "sha256:6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+}
+
+test "COMP-CID-002: cid of bool false is stable" {
+  cid.cid_of({ t: "bool", v: false }).ok == "sha256:4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+}
+
+test "COMP-CID-003: cid of bool true is stable" {
+  cid.cid_of({ t: "bool", v: true }).ok == "sha256:dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986"
+}
+
+test "COMP-CID-004: cid of int 0 is stable" {
+  cid.cid_of({ t: "int", v: 0 }).ok == "sha256:dc4c8669df128318c5790c414c870cc76c585268552851e78d3ee8604dbec0e3"
+}
+
+test "COMP-CID-005: cid of empty text is stable" {
+  cid.cid_of({ t: "text", v: "" }).ok == "sha256:6c449f91c1adbf3945ad078f5f875c0c1f133f246c4588668faffbe23a3c195f"
+}
+
+test "COMP-CID-006: cid of empty list is stable" {
+  cid.cid_of({ t: "list", v: [] }).ok == "sha256:7e2e8b49f93a4f1fcd3d8c53db08bcd2fb714f1d91d4db7ed0b8786c572f9164"
+}
+
+test "COMP-CID-007: cid of empty record is stable" {
+  cid.cid_of({ t: "record", v: [] }).ok == "sha256:92c0a3cd8b571ac5634aa066fcc63d7b62155c36126a29231d97692ff2944875"
+}
+
+test "COMP-CID-008: same value always same cid" {
+  let a = cid.cid_of({ t: "int", v: 42 }) in
+  let b = cid.cid_of({ t: "int", v: 42 }) in
+  a.ok == b.ok
+}
+
+test "COMP-CID-009: different values always different cids" {
+  let a = cid.cid_of({ t: "int", v: 42 }) in
+  let b = cid.cid_of({ t: "int", v: 43 }) in
+  a.ok != b.ok
+}
+
+test "COMP-CID-010: cid always starts with sha256:" {
+  str.starts_with(cid.cid_of({ t: "null" }).ok, "sha256:")
+}
+
+test "COMP-CID-011: cid of option_none is stable" {
+  cid.cid_of({ t: "option_none" }).ok == "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+}
+
+test "COMP-CID-012: invalid input returns err not crash" {
+  let r = cid.cid_of(42) in
+  rec.has(r, "err")
+}

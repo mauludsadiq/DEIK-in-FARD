@@ -1,0 +1,67 @@
+import("../../packages/kernel-policy/src/policy") as policy
+import("std/rec") as rec
+
+// DEK v1 Compliance: Policy Enforcement
+
+let program_a = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+let program_b = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+let now_ms = 1700000000000
+
+let open_policy = policy.make_policy(null, null, null, null, null)
+let strict_policy = policy.make_policy([program_a], ["time"], ["ok"], 1000, 9999999999999)
+let expired_policy = policy.make_policy(null, null, null, null, 1)
+
+test "COMP-POLICY-001: open policy allows all programs" {
+  policy.enforce(open_policy, program_b, "ok", [], 0, now_ms).ok == true
+}
+
+test "COMP-POLICY-002: open policy allows all oracle kinds" {
+  policy.enforce(open_policy, program_a, "ok", ["http", "random", "time"], 0, now_ms).ok == true
+}
+
+test "COMP-POLICY-003: strict policy allows permitted program" {
+  policy.enforce(strict_policy, program_a, "ok", ["time"], 100, now_ms).ok == true
+}
+
+test "COMP-POLICY-004: strict policy rejects unpermitted program" {
+  let r = policy.enforce(strict_policy, program_b, "ok", ["time"], 100, now_ms) in
+  r.ok == false && r.code == "PROGRAM_NOT_ALLOWED"
+}
+
+test "COMP-POLICY-005: strict policy rejects unpermitted oracle" {
+  let r = policy.enforce(strict_policy, program_a, "ok", ["http"], 100, now_ms) in
+  r.ok == false && r.code == "ORACLE_NOT_ALLOWED"
+}
+
+test "COMP-POLICY-006: strict policy rejects unpermitted exit" {
+  let r = policy.enforce(strict_policy, program_a, "err", ["time"], 100, now_ms) in
+  r.ok == false && r.code == "EXIT_NOT_ALLOWED"
+}
+
+test "COMP-POLICY-007: strict policy rejects exceeded step count" {
+  let r = policy.enforce(strict_policy, program_a, "ok", ["time"], 9999, now_ms) in
+  r.ok == false && r.code == "STEP_CAP_EXCEEDED"
+}
+
+test "COMP-POLICY-008: expired policy fails with POLICY_EXPIRED" {
+  let r = policy.enforce(expired_policy, program_a, "ok", [], 0, now_ms) in
+  r.ok == false && r.code == "POLICY_EXPIRED"
+}
+
+test "COMP-POLICY-009: revoked policy fails with POLICY_REVOKED" {
+  let r = policy.enforce(policy.revoke(open_policy), program_a, "ok", [], 0, now_ms) in
+  r.ok == false && r.code == "POLICY_REVOKED"
+}
+
+test "COMP-POLICY-010: policy failure phase is policy.enforce" {
+  let r = policy.enforce(policy.revoke(open_policy), program_a, "ok", [], 0, now_ms) in
+  r.phase == "policy.enforce"
+}
+
+test "COMP-POLICY-011: policy cid is stable" {
+  policy.policy_cid(open_policy).ok == policy.policy_cid(open_policy).ok
+}
+
+test "COMP-POLICY-012: different policies have different cids" {
+  policy.policy_cid(open_policy).ok != policy.policy_cid(strict_policy).ok
+}

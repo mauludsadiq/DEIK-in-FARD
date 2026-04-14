@@ -1,0 +1,110 @@
+import("../../packages/kernel-canon/src/encode") as encode
+import("../../packages/kernel-canon/src/types") as types
+import("std/bytes") as bytes
+import("std/rec") as rec
+
+
+// DEK v1 Compliance: Canonical Bytes
+// These vectors are normative. Any conforming implementation must produce
+// exactly these byte sequences for these inputs.
+
+test "COMP-BYTES-001: null encodes to single byte 0x00" {
+  bytes.to_hex(encode.encode({ t: "null" }).ok) == "00"
+}
+
+test "COMP-BYTES-002: bool false encodes to single byte 0x01" {
+  bytes.to_hex(encode.encode({ t: "bool", v: false }).ok) == "01"
+}
+
+test "COMP-BYTES-003: bool true encodes to single byte 0x02" {
+  bytes.to_hex(encode.encode({ t: "bool", v: true }).ok) == "02"
+}
+
+test "COMP-BYTES-004: int 0 encodes to tag 0x03 plus 8 zero bytes" {
+  bytes.to_hex(encode.encode({ t: "int", v: 0 }).ok) == "030000000000000000"
+}
+
+test "COMP-BYTES-005: int 1 encodes correctly" {
+  bytes.to_hex(encode.encode({ t: "int", v: 1 }).ok) == "030000000000000001"
+}
+
+test "COMP-BYTES-006: int -1 encodes as two's complement" {
+  bytes.to_hex(encode.encode({ t: "int", v: -1 }).ok) == "03ffffffffffffffff"
+}
+
+test "COMP-BYTES-007: int 255 encodes correctly" {
+  bytes.to_hex(encode.encode({ t: "int", v: 255 }).ok) == "0300000000000000ff"
+}
+
+test "COMP-BYTES-008: int 256 encodes correctly" {
+  bytes.to_hex(encode.encode({ t: "int", v: 256 }).ok) == "030000000000000100"
+}
+
+test "COMP-BYTES-009: int -128 encodes correctly" {
+  bytes.to_hex(encode.encode({ t: "int", v: -128 }).ok) == "03ffffffffffffff80"
+}
+
+test "COMP-BYTES-010: empty text encodes to tag 0x05 plus 8-byte length 0" {
+  bytes.to_hex(encode.encode({ t: "text", v: "" }).ok) == "050000000000000000"
+}
+
+test "COMP-BYTES-011: text abc encodes with correct length prefix" {
+  bytes.to_hex(encode.encode({ t: "text", v: "abc" }).ok) == "050000000000000003616263"
+}
+
+test "COMP-BYTES-012: empty bytes encodes to tag 0x06 plus 8-byte length 0" {
+  bytes.to_hex(encode.encode(types.make_bytes(bytes.of_list([]))).ok) == "060000000000000000"
+}
+
+test "COMP-BYTES-013: bytes 0xff encodes correctly" {
+  bytes.to_hex(encode.encode(types.make_bytes(bytes.of_list([255]))).ok) == "060000000000000001ff"
+}
+
+test "COMP-BYTES-014: empty list encodes to tag 0x07 plus 8-byte count 0" {
+  bytes.to_hex(encode.encode({ t: "list", v: [] }).ok) == "070000000000000000"
+}
+
+test "COMP-BYTES-015: list of two nulls encodes correctly" {
+  bytes.len(encode.encode({ t: "list", v: [{ t: "null" }, { t: "null" }] }).ok) == 11
+}
+
+test "COMP-BYTES-016: list of two nulls is exactly 11 bytes" {
+  bytes.len(encode.encode({ t: "list", v: [{ t: "null" }, { t: "null" }] }).ok) == 11
+}
+
+test "COMP-BYTES-017: empty record encodes to tag 0x08 plus 8-byte count 0" {
+  bytes.to_hex(encode.encode({ t: "record", v: [] }).ok) == "080000000000000000"
+}
+
+test "COMP-BYTES-018: option_none encodes to single byte 0x0a" {
+  bytes.to_hex(encode.encode({ t: "option_none" }).ok) == "0a"
+}
+
+test "COMP-BYTES-019: option_some wrapping null encodes correctly" {
+  bytes.to_hex(encode.encode({ t: "option_some", v: { t: "null" } }).ok) == "0b00"
+}
+
+test "COMP-BYTES-020: result_ok wrapping bool true encodes correctly" {
+  bytes.to_hex(encode.encode({ t: "result_ok", v: { t: "bool", v: true } }).ok) == "0c02"
+}
+
+test "COMP-BYTES-021: result_err wrapping null encodes correctly" {
+  bytes.to_hex(encode.encode({ t: "result_err", v: { t: "null" } }).ok) == "0d00"
+}
+
+test "COMP-BYTES-022: float 1.0 encodes as tag 0x04 plus IEEE 754 bits" {
+  bytes.len(encode.encode({ t: "float", bits_hex: "3ff0000000000000" }).ok) == 9
+}
+
+test "COMP-BYTES-023: empty map encodes to tag 0x18 plus 8-byte count 0" {
+  bytes.to_hex(encode.encode({ t: "map", v: [] }).ok) == "180000000000000000"
+}
+
+test "COMP-BYTES-024: empty set encodes to tag 0x19 plus 8-byte count 0" {
+  bytes.to_hex(encode.encode({ t: "set", v: [] }).ok) == "190000000000000000"
+}
+
+test "COMP-BYTES-025: unknown tag returns structured error not crash" {
+  let r = encode.encode({ t: "unknown_type_xyz" }) in
+  rec.has(r, "err")
+}

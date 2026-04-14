@@ -1,0 +1,45 @@
+import("../../packages/kernel-replay/src/replay") as replay
+import("../../packages/kernel-canon/src/types") as types
+import("std/rec") as rec
+import("std/str") as str
+
+// DEK v1 Compliance: Replay and Determinism
+
+fn identity_eval(program, input, config) { { ok: input } }
+fn int_eval(program, input, config) { { ok: types.make_int(42) } }
+
+let program = { t: "text", v: "identity" }
+let input   = { t: "null" }
+
+test "COMP-REPLAY-001: replay_check ok for deterministic evaluator" {
+  rec.has(replay.replay_check(program, input, identity_eval), "ok")
+}
+
+test "COMP-REPLAY-002: replay_check receipt_cid starts with sha256:" {
+  str.starts_with(replay.replay_check(program, input, identity_eval).ok.receipt_cid, "sha256:")
+}
+
+test "COMP-REPLAY-003: replay_check deterministic is true" {
+  replay.replay_check(program, input, identity_eval).ok.deterministic == true
+}
+
+test "COMP-REPLAY-004: replay_check runs count is 2" {
+  replay.replay_check(program, input, identity_eval).ok.runs == 2
+}
+
+test "COMP-REPLAY-005: same inputs same receipt_cid across calls" {
+  let a = replay.replay_check(program, input, identity_eval) in
+  let b = replay.replay_check(program, input, identity_eval) in
+  a.ok.receipt_cid == b.ok.receipt_cid
+}
+
+test "COMP-REPLAY-006: different inputs different receipt_cids" {
+  let a = replay.replay_check(program, { t: "null" }, identity_eval) in
+  let b = replay.replay_check(program, { t: "bool", v: true }, identity_eval) in
+  a.ok.receipt_cid != b.ok.receipt_cid
+}
+
+test "COMP-REPLAY-007: failing evaluator is still deterministic" {
+  let fail_eval = fn(p, i, c) { { err: { code: "FAIL" } } } in
+  replay.replay_check(program, input, fail_eval).ok.deterministic == true
+}

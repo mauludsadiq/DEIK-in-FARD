@@ -1,0 +1,44 @@
+import("../../packages/kernel-license/src/license") as license
+import("std/rec") as rec
+import("std/str") as str
+
+// DEK v1 Compliance: License Registry
+
+let prog_a = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+let prog_b = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+let prog_c = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+
+let registry_ab = license.make_registry([prog_a, prog_b])
+let empty_reg   = license.make_registry([])
+
+test "COMP-LICENSE-001: registry is canonical set" {
+  registry_ab.t == "set"
+}
+
+test "COMP-LICENSE-002: registry cid starts with sha256:" {
+  str.starts_with(license.registry_cid(registry_ab).ok, "sha256:")
+}
+
+test "COMP-LICENSE-003: same registry same cid" {
+  license.registry_cid(registry_ab).ok == license.registry_cid(registry_ab).ok
+}
+
+test "COMP-LICENSE-004: different registry different cid" {
+  license.registry_cid(registry_ab).ok != license.registry_cid(empty_reg).ok
+}
+
+test "COMP-LICENSE-005: is_licensed true for program in registry" {
+  license.is_licensed(prog_a, registry_ab)
+}
+
+test "COMP-LICENSE-006: is_licensed true for second program in registry" {
+  license.is_licensed(prog_b, registry_ab)
+}
+
+test "COMP-LICENSE-007: is_licensed false for program not in registry" {
+  !license.is_licensed(prog_c, registry_ab)
+}
+
+test "COMP-LICENSE-008: is_licensed false for empty registry" {
+  !license.is_licensed(prog_a, empty_reg)
+}
