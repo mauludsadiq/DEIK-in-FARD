@@ -1,8 +1,8 @@
 # DEK in FARD
 
-**Deterministic Encoding Kernel** — a canonical binary serialization format implemented in pure FARD.
+**Deterministic Encoding Kernel** — a canonical binary serialization and execution integrity system implemented in pure FARD.
 
-DEK produces a deterministic, content-addressable byte representation of typed values. The same value always produces the same bytes, regardless of platform or runtime. This makes encoded values suitable for SHA-256 content addressing, cryptographic witnessing, and FARD receipt chains.
+DEK provides the cryptographic substrate for licensing, anti-hallucination, and context integrity guarantees in LLM-backed systems. The same value always produces the same bytes. Every execution produces a receipt. Every receipt can be verified. Every context window can be pinned and checked for truncation.
 
 ## Quick start
 
@@ -14,6 +14,32 @@ DEK produces a deterministic, content-addressable byte representation of typed v
     fardrun test --program tests/bundle/test_validate.fard
     fardrun test --program tests/witness/test_receipt.fard
     fardrun test --program tests/exec/test_engine.fard
+    fardrun test --program tests/verify/test_verify.fard
+    fardrun test --program tests/license/test_license.fard
+    fardrun test --program tests/context/test_context.fard
+    fardrun test --program tests/persist/test_persist.fard
+
+## Architecture
+
+    packages/
+      kernel-canon/src/
+        encode.fard       -- deterministic serializer (27 tag types)
+        types.fard        -- canonical value constructors
+        cid.fard          -- content addressing: sha256(encode(v))
+      kernel-bundle/src/
+        validate.fard     -- bundle admission gatekeeper
+      kernel-witness/src/
+        receipt.fard      -- execution witness with CID chaining
+      kernel-exec/src/
+        engine.fard       -- full exec pipeline: validate+cid+eval+receipt
+      kernel-verify/src/
+        verify.fard       -- receipt and chain verification
+      kernel-license/src/
+        license.fard      -- program CID registry and licensing gate
+      kernel-context/src/
+        context.fard      -- canonical context binding and truncation detection
+      kernel-persist/src/
+        persist.fard      -- registry and context save/load with CID stability
 
 ## Phase ladder
 
@@ -22,36 +48,86 @@ DEK produces a deterministic, content-addressable byte representation of typed v
     Phase 3 - Bundle admission  done  validate.fard
     Phase 4 - Receipt formation done  receipt.fard
     Phase 5 - Execution         done  engine.fard
+    Phase 6 - Verification      done  verify.fard
+    Phase 7 - Licensing         done  license.fard
+    Phase 8 - Context binding   done  context.fard
+    Phase 9 - Persistence       done  persist.fard
 
-All five phases complete.
+## Test summary
+
+    121 tests, 0 failures
+
+    tests/kernel/test_encode_smoke.fard     2 tests
+    tests/kernel/test_encode_vectors.fard  11 tests
+    tests/kernel/test_encode_types.fard    18 tests
+    tests/kernel/test_cid.fard              7 tests
+    tests/bundle/test_validate.fard        11 tests
+    tests/witness/test_receipt.fard        13 tests
+    tests/exec/test_engine.fard            11 tests
+    tests/verify/test_verify.fard          12 tests
+    tests/license/test_license.fard        17 tests
+    tests/context/test_context.fard        16 tests
+    tests/persist/test_persist.fard        14 tests
 
 ## Execution pipeline
 
-The engine wires all five phases together:
-
     exec_bundle(bundle, evaluator) -> { ok: { receipt, receipt_cid, exit, result } }
-                                   | { err: { code, message, phase, details } }
+                                    | { err: { code, message, phase, details } }
 
-Phases inside exec_bundle:
+Internal phases:
 
-    1. validate_bundle(bundle)         -- reject malformed bundles early
-    2. cid_of(program), cid_of(input)  -- content-address all inputs
-    3. evaluator(program, input, config) -- caller-supplied execution
-    4. cid_of(result)                  -- content-address the output
-    5. make_receipt(...)               -- form cryptographic witness
-    6. receipt_cid(receipt)            -- content-address the receipt itself
+    1. validate_bundle(bundle)               reject malformed bundles early
+    2. cid_of(program), cid_of(input)        content-address all inputs
+    3. evaluator(program, input, config)     caller-supplied execution
+    4. cid_of(result)                        content-address the output
+    5. make_receipt(...)                     form cryptographic witness
+    6. receipt_cid(receipt)                  content-address the receipt itself
 
-The evaluator is injected by the caller, keeping the engine pure and testable.
-Any function with signature fn(program, input, config) -> { ok: result } | { err: ... }
-can serve as an evaluator.
+The evaluator is injected by the caller. Any fn(program, input, config) works.
+
+## Licensing
+
+A program CID registry is a canonical set of approved program identifiers.
+The registry itself is content-addressed so license versions are pinnable.
+
+    -- Build a registry
+    let registry = license.make_registry(["sha256:abc...", "sha256:def..."])
+    let rcid = license.registry_cid(registry)
+
+    -- Save to disk
+    persist.save_registry(registry, "registries/v1.json")
+
+    -- Load and verify
+    let r = persist.load_registry("registries/v1.json")
+    let gate = license.verify_licensed_chain(run_id, program_cid, r.ok.registry)
+
+    -- Result
+    { ok: { run_id, program_cid, registry_cid, chain_depth } }
+    { err: { code: "NOT_LICENSED", ... } }
+
+Remote registry: set FARD_REGISTRY_URL to enable remote receipt lookup.
+
+## Context integrity
+
+Context windows are encoded as canonical values and pinned by CID at session start.
+Any truncation or modification is detectable by comparing CIDs.
+
+    -- Build and pin a context
+    let msg = ctx.make_message("user", "What is 2+2?")
+    let context = ctx.make_context([msg.ok], "claude-3", 1)
+    let original_cid = ctx.context_cid(context).ok
+
+    -- Save to disk
+    persist.save_context(context, "contexts/session_001.json")
+
+    -- Check for truncation at any point
+    let check = ctx.truncation_check(original_cid, current_context)
+    -- { ok: { cid, verified: true } }
+    -- { err: { code: "CONTEXT_MODIFIED", original, current } }
 
 ## Content addressing
 
     cid_of(canon_val) -> { ok: "sha256:..." }
-
-The CID is sha256(encode(v)) hex-encoded with a sha256: prefix.
-Same canonical value always produces the same CID.
-Different canonical values always produce different CIDs.
 
 Known stable CIDs:
 
@@ -59,9 +135,7 @@ Known stable CIDs:
     cid_of(bool false)   sha256:4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a
     cid_of(bool true)    sha256:dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986
 
-## Bundle validation
-
-A bundle packages a program, input, and execution config for content-addressed execution.
+## Bundle format
 
 Required fields:
 
@@ -76,39 +150,21 @@ Optional fields:
     config      -- record of runtime settings
     version     -- text
 
-## Receipt formation
-
-A receipt is the cryptographic witness of a completed execution. It binds together
-all CIDs that uniquely identify what ran, what it consumed, and what it produced.
+## Receipt format
 
     make_receipt(
       bundle_cid, program_cid, input_cid, result_cid,
       exit_code, kernel_version,
       deps_cid, oracle_cid, trace_cid, step_count, parent_digest
-    ) -> canonical receipt value
-
-    receipt_cid(receipt) -> { ok: "sha256:..." }
+    )
 
 Exit codes: "ok" | "err" | "abort"
-
-Receipts are themselves canonical values and can be content-addressed.
 Parent digest enables receipt chaining across execution steps.
+Receipts are canonical values and are themselves content-addressable.
 
-## Known FARD language behaviour
+## Encoding format
 
-Inline if/else expressions inside list literals evaluate both branches eagerly.
-Extract conditional logic to helper functions to avoid this:
-
-    -- This crashes if x is null (both branches evaluated):
-    { k: "field", v: if x == null then default_val else types.make_text(x) }
-
-    -- This works correctly:
-    fn opt_text(x) { if x == null then { t: "option_none" } else types.make_text(x) }
-    { k: "field", v: opt_text(x) }
-
-## Format
-
-Every encoded value starts with a 1-byte tag. The tag determines the layout of the remaining bytes.
+Every encoded value starts with a 1-byte tag.
 
 | Tag | Hex  | Type            | Payload                                              |
 |-----|------|-----------------|------------------------------------------------------|
@@ -140,65 +196,38 @@ Every encoded value starts with a 1-byte tag. The tag determines the layout of t
 | 25  | 0x19 | set             | u64_be(count) ++ encode(item)*                       |
 | 26  | 0x1a | receipt         | encode(record v)                                     |
 
-## Canonical value format
-
-The encoder expects values in canonical record form using the helpers in types.fard:
+## Canonical value constructors
 
     make_null()
     make_bool(true)
     make_int(42)
-    make_float_bits("3ff0000000000000")   -- IEEE 754 hex
+    make_float_bits("3ff0000000000000")
     make_text("hello")
     make_bytes(<Bytes>)
     make_list([canon_val, ...])
     make_record([{ k: "key", v: canon_val }, ...])
     make_cid("sha256:abc...")
+    make_set([canon_val, ...])
+    make_map([{ k: canon_val, v: canon_val }, ...])
 
-Wrapped types use raw records:
+## Known FARD language behaviour
 
-    { t: "option_none" }
-    { t: "option_some", v: canon_val }
-    { t: "result_ok",   v: canon_val }
-    { t: "result_err",  v: canon_val }
-    { t: "bigint", sign: "positive", mag_hex: "ff..." }
-    { t: "map", v: [{ k: canon_val, v: canon_val }, ...] }
-    { t: "set", v: [canon_val, ...] }
+Inline if/else expressions inside list literals evaluate both branches eagerly.
+Extract conditional logic to helper functions:
 
-## Structure
+    -- Crashes if x is null:
+    { k: "field", v: if x == null then default_val else types.make_text(x) }
 
-    packages/
-      kernel-canon/src/
-        encode.fard       -- encoder (27 tag types)
-        types.fard        -- canonical value constructors
-        cid.fard          -- content addressing: sha256(encode(v))
-      kernel-bundle/src/
-        validate.fard     -- bundle admission gatekeeper
-      kernel-witness/src/
-        receipt.fard      -- execution witness with CID chaining
-      kernel-exec/src/
-        engine.fard       -- full exec pipeline: validate+cid+eval+receipt
-    tests/
-      kernel/
-        test_encode_smoke.fard    -- basic run check (2 tests)
-        test_encode_vectors.fard  -- exact byte vector tests (11 tests)
-        test_encode_types.fard    -- full type coverage (18 tests)
-        test_cid.fard             -- content addressing (7 tests)
-      bundle/
-        test_validate.fard        -- bundle validation (11 tests)
-      witness/
-        test_receipt.fard         -- receipt formation (13 tests)
-      exec/
-        test_engine.fard          -- execution pipeline (11 tests)
-    main.fard             -- demo: encodes {answer: 42, label: "DEK"} -> 59 bytes
-
-## Test summary
-
-    62 tests, 0 failures
+    -- Works correctly:
+    fn opt_text(x) { if x == null then { t: "option_none" } else types.make_text(x) }
+    { k: "field", v: opt_text(x) }
 
 ## Properties
 
 - Deterministic: same input produces same bytes, always
 - Self-describing: tag byte first, no schema required to parse length
 - Content-addressable: sha256(encode(v)) is a stable CID for any value
-- FARD-native: no external dependencies, runs under fardrun
 - Evaluator-agnostic: engine accepts any fn(program, input, config) as evaluator
+- Licensable: program CID registries are versioned, persistent, and verifiable
+- Tamper-evident: context truncation and modification are detectable by CID
+- FARD-native: no external dependencies, runs under fardrun
