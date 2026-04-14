@@ -1,0 +1,128 @@
+import("../../packages/kernel-oracle/src/oracle") as oracle
+import("std/rec") as rec
+import("std/str") as str
+
+test "oracle_now returns ok" {
+  let r = oracle.oracle_now(0) in
+  rec.has(r, "ok")
+}
+
+test "oracle_now value is int" {
+  let r = oracle.oracle_now(0) in
+  r.ok.value > 0
+}
+
+test "oracle_now event is oracle_event type" {
+  let r = oracle.oracle_now(0) in
+  r.ok.event.t == "oracle_event"
+}
+
+test "oracle_now event has cid" {
+  let r = oracle.oracle_now(0) in
+  str.starts_with(r.ok.cid, "sha256:")
+}
+
+test "oracle_now two calls produce different cids" {
+  let a = oracle.oracle_now(0) in
+  let b = oracle.oracle_now(1) in
+  a.ok.cid != b.ok.cid
+}
+
+test "oracle_random_int returns ok" {
+  let r = oracle.oracle_random_int(0, 100, 0) in
+  rec.has(r, "ok")
+}
+
+test "oracle_random_int value in range" {
+  let r = oracle.oracle_random_int(0, 100, 0) in
+  r.ok.value >= 0 && r.ok.value <= 100
+}
+
+test "oracle_random_int event has cid" {
+  let r = oracle.oracle_random_int(0, 100, 0) in
+  str.starts_with(r.ok.cid, "sha256:")
+}
+
+test "oracle_random_uuid returns ok" {
+  let r = oracle.oracle_random_uuid(0) in
+  rec.has(r, "ok")
+}
+
+test "oracle_random_uuid value is text" {
+  let r = oracle.oracle_random_uuid(0) in
+  r.ok.value != null
+}
+
+test "oracle_random_uuid event has cid" {
+  let r = oracle.oracle_random_uuid(0) in
+  str.starts_with(r.ok.cid, "sha256:")
+}
+
+test "oracle_sensor returns ok" {
+  let data = { t: "record", v: [{ k: "altitude", v: { t: "float", bits_hex: "4059000000000000" } }] } in
+  let r = oracle.oracle_sensor("altimeter", data, 0) in
+  rec.has(r, "ok")
+}
+
+test "oracle_sensor event kind is sensor" {
+  let data = { t: "null" } in
+  let r = oracle.oracle_sensor("gps", data, 0) in
+  r.ok.event.t == "oracle_event"
+}
+
+test "oracle_sensor event has cid" {
+  let data = { t: "null" } in
+  let r = oracle.oracle_sensor("gps", data, 0) in
+  str.starts_with(r.ok.cid, "sha256:")
+}
+
+test "oracle_model_call returns ok" {
+  let r = oracle.oracle_model_call("claude-3", "What is 2+2?", "4", 0) in
+  rec.has(r, "ok")
+}
+
+test "oracle_model_call value is response text" {
+  let r = oracle.oracle_model_call("claude-3", "What is 2+2?", "4", 0) in
+  r.ok.value == "4"
+}
+
+test "oracle_model_call event has cid" {
+  let r = oracle.oracle_model_call("claude-3", "What is 2+2?", "4", 0) in
+  str.starts_with(r.ok.cid, "sha256:")
+}
+
+test "different model calls different cids" {
+  let a = oracle.oracle_model_call("claude-3", "hello", "hi", 0) in
+  let b = oracle.oracle_model_call("claude-3", "hello", "hello there", 0) in
+  a.ok.cid != b.ok.cid
+}
+
+test "make_snapshot returns list" {
+  let e1 = oracle.oracle_now(0) in
+  let e2 = oracle.oracle_random_uuid(1) in
+  let snap = oracle.make_snapshot([e1.ok.event, e2.ok.event]) in
+  snap.t == "list"
+}
+
+test "snapshot_cid returns sha256: string" {
+  let e1 = oracle.oracle_now(0) in
+  let snap = oracle.make_snapshot([e1.ok.event]) in
+  let r = oracle.snapshot_cid(snap) in
+  str.starts_with(r.ok, "sha256:")
+}
+
+test "make_event returns oracle_event type" {
+  let e = oracle.make_event(
+    "ffi",
+    { t: "text", v: "my_lib.compute" },
+    { t: "int", v: 99 },
+    0
+  ) in
+  e.t == "oracle_event"
+}
+
+test "seq number affects event cid" {
+  let a = oracle.oracle_model_call("m", "p", "r", 0) in
+  let b = oracle.oracle_model_call("m", "p", "r", 1) in
+  a.ok.cid != b.ok.cid
+}

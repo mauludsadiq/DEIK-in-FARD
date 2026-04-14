@@ -1,0 +1,147 @@
+import("../../kernel-canon/src/types") as types
+import("../../kernel-canon/src/cid") as cid_mod
+import("std/time") as time
+import("std/random") as random
+import("std/http") as http
+import("std/rec") as rec
+import("std/str") as str
+import("std/list") as list
+
+// An oracle event is a canonical record witnessing one non-deterministic call.
+// Every oracle event has:
+//   kind     -- "time" | "random" | "http" | "sensor" | "model_call" | "ffi"
+//   input    -- canonical value describing what was requested
+//   output   -- canonical value describing what was returned
+//   seq      -- int, sequence number within execution
+
+fn make_event(kind, input, output, seq) {
+  { t: "oracle_event",
+    v: types.make_record([
+      { k: "input",  v: input },
+      { k: "kind",   v: types.make_text(kind) },
+      { k: "output", v: output },
+      { k: "seq",    v: types.make_int(seq) }
+    ])
+  }
+}
+
+fn event_cid(event) {
+  cid_mod.cid_of(event)
+}
+
+// -- Time oracle --
+
+fn oracle_now(seq) {
+  let ts = time.now() in
+  let event = make_event(
+    "time",
+    types.make_text("now"),
+    types.make_int(ts),
+    seq
+  ) in
+  { ok: { value: ts, event: event, cid: event_cid(event).ok } }
+}
+
+// -- Random oracle --
+
+fn oracle_random_int(lo, hi, seq) {
+  let v = random.int(lo, hi) in
+  let event = make_event(
+    "random",
+    types.make_record([
+      { k: "hi", v: types.make_int(hi) },
+      { k: "kind", v: types.make_text("int") },
+      { k: "lo", v: types.make_int(lo) }
+    ]),
+    types.make_int(v),
+    seq
+  ) in
+  { ok: { value: v, event: event, cid: event_cid(event).ok } }
+}
+
+fn oracle_random_uuid(seq) {
+  let v = random.uuid_v4() in
+  let event = make_event(
+    "random",
+    types.make_text("uuid_v4"),
+    types.make_text(v),
+    seq
+  ) in
+  { ok: { value: v, event: event, cid: event_cid(event).ok } }
+}
+
+// -- HTTP oracle --
+
+fn oracle_http_get(url, seq) {
+  let resp = http.get(url) in
+  let status = rec.get(resp, "status") in
+  let body = rec.get(resp, "body") in
+  let event = make_event(
+    "http",
+    types.make_record([
+      { k: "method", v: types.make_text("GET") },
+      { k: "url",    v: types.make_text(url) }
+    ]),
+    types.make_record([
+      { k: "body",   v: types.make_text(if body == null then "" else body) },
+      { k: "status", v: types.make_int(if status == null then 0 else status) }
+    ]),
+    seq
+  ) in
+  { ok: { value: resp, event: event, cid: event_cid(event).ok } }
+}
+
+// -- Sensor oracle --
+// Sensor data is provided externally (e.g. from hardware drivers).
+// The oracle layer wraps it in a canonical event for witnessing.
+
+fn oracle_sensor(sensor_name, sensor_data, seq) {
+  let event = make_event(
+    "sensor",
+    types.make_text(sensor_name),
+    sensor_data,
+    seq
+  ) in
+  { ok: { value: sensor_data, event: event, cid: event_cid(event).ok } }
+}
+
+// -- Model call oracle --
+// External LLM/ML model responses are wrapped here.
+
+fn oracle_model_call(model, prompt, response, seq) {
+  let event = make_event(
+    "model_call",
+    types.make_record([
+      { k: "model",  v: types.make_text(model) },
+      { k: "prompt", v: types.make_text(prompt) }
+    ]),
+    types.make_text(response),
+    seq
+  ) in
+  { ok: { value: response, event: event, cid: event_cid(event).ok } }
+}
+
+// -- Oracle snapshot --
+// A snapshot is a list of oracle events from one execution.
+// It is itself a canonical value and can be CID'd.
+
+fn make_snapshot(events) {
+  types.make_list(events)
+}
+
+fn snapshot_cid(snapshot) {
+  cid_mod.cid_of(snapshot)
+}
+
+{
+  make_event: make_event,
+  event_cid: event_cid,
+  oracle_now: oracle_now,
+  oracle_random_int: oracle_random_int,
+  oracle_random_uuid: oracle_random_uuid,
+  oracle_http_get: oracle_http_get,
+  oracle_sensor: oracle_sensor,
+  oracle_model_call: oracle_model_call,
+  make_snapshot: make_snapshot,
+  snapshot_cid: snapshot_cid
+}
