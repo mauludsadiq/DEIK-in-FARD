@@ -1,8 +1,8 @@
 # DEK in FARD
 
-**Deterministic Encoding Kernel** — a canonical binary serialization and execution integrity system implemented in pure FARD.
+**Deterministic Execution Kernel** — a canonical binary serialization and execution integrity system implemented in pure FARD.
 
-DEK provides the cryptographic substrate for licensing, anti-hallucination, and context integrity guarantees in LLM-backed systems. The same value always produces the same bytes. Every execution produces a receipt. Every receipt can be verified. Every context window can be pinned and checked for truncation.
+DEK makes context, program identity, execution, licensing, and chain of custody content-addressable and locally verifiable. Non-determinism is never hidden — every oracle call is typed, sequenced, and witnessed.
 
 ## Quick start
 
@@ -18,6 +18,8 @@ DEK provides the cryptographic substrate for licensing, anti-hallucination, and 
     fardrun test --program tests/license/test_license.fard
     fardrun test --program tests/context/test_context.fard
     fardrun test --program tests/persist/test_persist.fard
+    fardrun test --program tests/replay/test_replay.fard
+    fardrun test --program tests/oracle/test_oracle.fard
 
 ## Architecture
 
@@ -40,34 +42,55 @@ DEK provides the cryptographic substrate for licensing, anti-hallucination, and 
         context.fard      -- canonical context binding and truncation detection
       kernel-persist/src/
         persist.fard      -- registry and context save/load with CID stability
+      kernel-replay/src/
+        replay.fard       -- determinism proof via receipt comparison
+      kernel-oracle/src/
+        oracle.fard       -- canonical oracle boundary: time/random/http/sensor/model/ffi
 
 ## Phase ladder
 
-    Phase 1 - Canon             done  encode.fard, types.fard
-    Phase 2 - Addressing        done  cid.fard
-    Phase 3 - Bundle admission  done  validate.fard
-    Phase 4 - Receipt formation done  receipt.fard
-    Phase 5 - Execution         done  engine.fard
-    Phase 6 - Verification      done  verify.fard
-    Phase 7 - Licensing         done  license.fard
-    Phase 8 - Context binding   done  context.fard
-    Phase 9 - Persistence       done  persist.fard
+    Phase 1  - Canon             done  encode.fard, types.fard
+    Phase 2  - Addressing        done  cid.fard
+    Phase 3  - Bundle admission  done  validate.fard
+    Phase 4  - Receipt formation done  receipt.fard
+    Phase 5  - Execution         done  engine.fard
+    Phase 6  - Verification      done  verify.fard
+    Phase 7  - Licensing         done  license.fard
+    Phase 8  - Context binding   done  context.fard
+    Phase 9  - Persistence       done  persist.fard
+    Phase 10 - Replay            done  replay.fard
+    Phase 11 - Oracle boundary   done  oracle.fard
+    Phase 12 - Policy layer            kernel-policy (next)
 
 ## Test summary
 
-    121 tests, 0 failures
+    156 tests, 0 failures
 
-    tests/kernel/test_encode_smoke.fard     2 tests
-    tests/kernel/test_encode_vectors.fard  11 tests
-    tests/kernel/test_encode_types.fard    18 tests
-    tests/kernel/test_cid.fard              7 tests
-    tests/bundle/test_validate.fard        11 tests
-    tests/witness/test_receipt.fard        13 tests
-    tests/exec/test_engine.fard            11 tests
-    tests/verify/test_verify.fard          12 tests
-    tests/license/test_license.fard        17 tests
-    tests/context/test_context.fard        16 tests
-    tests/persist/test_persist.fard        14 tests
+    tests/kernel/test_encode_smoke.fard      2 tests
+    tests/kernel/test_encode_vectors.fard   11 tests
+    tests/kernel/test_encode_types.fard     18 tests
+    tests/kernel/test_cid.fard               7 tests
+    tests/bundle/test_validate.fard         11 tests
+    tests/witness/test_receipt.fard         13 tests
+    tests/exec/test_engine.fard             11 tests
+    tests/verify/test_verify.fard           12 tests
+    tests/license/test_license.fard         17 tests
+    tests/context/test_context.fard         16 tests
+    tests/persist/test_persist.fard         14 tests
+    tests/replay/test_replay.fard           13 tests
+    tests/oracle/test_oracle.fard           22 tests
+
+## Frozen spec
+
+    spec/dek_v1/
+      canonical_values_v1.md
+      canonical_bytes_v1.md
+      bundle_v1.md
+      receipt_v1.md
+      verify_v1.md
+      license_registry_v1.md
+      context_v1.md
+      persist_v1.md
 
 ## Execution pipeline
 
@@ -83,45 +106,55 @@ Internal phases:
     5. make_receipt(...)                     form cryptographic witness
     6. receipt_cid(receipt)                  content-address the receipt itself
 
-The evaluator is injected by the caller. Any fn(program, input, config) works.
+## Oracle boundary
+
+Every non-deterministic call produces a canonical oracle_event:
+
+    oracle_now(seq)                          -> { ok: { value, event, cid } }
+    oracle_random_int(lo, hi, seq)           -> { ok: { value, event, cid } }
+    oracle_random_uuid(seq)                  -> { ok: { value, event, cid } }
+    oracle_http_get(url, seq)               -> { ok: { value, event, cid } }
+    oracle_sensor(name, data, seq)          -> { ok: { value, event, cid } }
+    oracle_model_call(model, prompt, response, seq) -> { ok: { value, event, cid } }
+
+Oracle events are sequenced, typed, and content-addressed.
+A snapshot of all events from one execution is itself a canonical value.
+
+    make_snapshot([event, ...]) -> canonical list
+    snapshot_cid(snapshot)      -> { ok: "sha256:..." }
+
+Non-determinism is never hidden. Every oracle call is explicit.
+
+## Replay
+
+    replay_check(program, input, evaluator)
+
+Runs the same execution twice and verifies both receipt CIDs match.
+Proves determinism without needing a stored receipt.
+
+    { ok: { receipt_cid, deterministic: true, runs: 2 } }
+    { err: { code: "NON_DETERMINISTIC", first, second } }
 
 ## Licensing
 
-A program CID registry is a canonical set of approved program identifiers.
-The registry itself is content-addressed so license versions are pinnable.
-
-    -- Build a registry
-    let registry = license.make_registry(["sha256:abc...", "sha256:def..."])
-    let rcid = license.registry_cid(registry)
-
-    -- Save to disk
+    let registry = license.make_registry(["sha256:...", ...])
     persist.save_registry(registry, "registries/v1.json")
 
-    -- Load and verify
     let r = persist.load_registry("registries/v1.json")
     let gate = license.verify_licensed_chain(run_id, program_cid, r.ok.registry)
 
-    -- Result
     { ok: { run_id, program_cid, registry_cid, chain_depth } }
     { err: { code: "NOT_LICENSED", ... } }
 
-Remote registry: set FARD_REGISTRY_URL to enable remote receipt lookup.
+Remote registry: set FARD_REGISTRY_URL for remote receipt lookup.
 
 ## Context integrity
 
-Context windows are encoded as canonical values and pinned by CID at session start.
-Any truncation or modification is detectable by comparing CIDs.
-
-    -- Build and pin a context
-    let msg = ctx.make_message("user", "What is 2+2?")
-    let context = ctx.make_context([msg.ok], "claude-3", 1)
+    let context = ctx.make_context([msg.ok, ...], "claude-3", turn_count)
     let original_cid = ctx.context_cid(context).ok
-
-    -- Save to disk
     persist.save_context(context, "contexts/session_001.json")
 
-    -- Check for truncation at any point
-    let check = ctx.truncation_check(original_cid, current_context)
+    ctx.truncation_check(original_cid, current_context)
     -- { ok: { cid, verified: true } }
     -- { err: { code: "CONTEXT_MODIFIED", original, current } }
 
@@ -131,24 +164,24 @@ Any truncation or modification is detectable by comparing CIDs.
 
 Known stable CIDs:
 
-    cid_of(null)         sha256:6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d
-    cid_of(bool false)   sha256:4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a
-    cid_of(bool true)    sha256:dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986
+    cid(null)         sha256:6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d
+    cid(bool false)   sha256:4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a
+    cid(bool true)    sha256:dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986
 
 ## Bundle format
 
 Required fields:
 
-    program     -- { t: "cid", v: "sha256:..." } or { t: "text", v: "<source>" }
-    input       -- any canonical value
-    trace_mode  -- "full" | "minimal" | "none"
+    program     { t: "cid", v: "sha256:..." } | { t: "text", v: "<source>" }
+    input       any canonical value
+    trace_mode  "full" | "minimal" | "none"
 
 Optional fields:
 
-    deps        -- list of { name: text, cid: text } entries
-    oracle      -- { t: "cid", v: "sha256:..." }
-    config      -- record of runtime settings
-    version     -- text
+    deps        list of { name: text, cid: text } entries
+    oracle      { t: "cid", v: "sha256:..." }
+    config      record of runtime settings
+    version     text
 
 ## Receipt format
 
@@ -160,7 +193,6 @@ Optional fields:
 
 Exit codes: "ok" | "err" | "abort"
 Parent digest enables receipt chaining across execution steps.
-Receipts are canonical values and are themselves content-addressable.
 
 ## Encoding format
 
@@ -199,16 +231,16 @@ Every encoded value starts with a 1-byte tag.
 ## Canonical value constructors
 
     make_null()
-    make_bool(true)
-    make_int(42)
-    make_float_bits("3ff0000000000000")
-    make_text("hello")
-    make_bytes(<Bytes>)
-    make_list([canon_val, ...])
-    make_record([{ k: "key", v: canon_val }, ...])
-    make_cid("sha256:abc...")
-    make_set([canon_val, ...])
-    make_map([{ k: canon_val, v: canon_val }, ...])
+    make_bool(b)
+    make_int(n)
+    make_float_bits(hex)
+    make_text(s)
+    make_bytes(bs)
+    make_list(xs)
+    make_record(entries)
+    make_cid(cid)
+    make_set(xs)
+    make_map(entries)
 
 ## Known FARD language behaviour
 
@@ -230,4 +262,6 @@ Extract conditional logic to helper functions:
 - Evaluator-agnostic: engine accepts any fn(program, input, config) as evaluator
 - Licensable: program CID registries are versioned, persistent, and verifiable
 - Tamper-evident: context truncation and modification are detectable by CID
+- Replayable: determinism is provable by running twice and comparing receipt CIDs
+- Oracle-transparent: every non-deterministic call is typed, sequenced, and witnessed
 - FARD-native: no external dependencies, runs under fardrun
