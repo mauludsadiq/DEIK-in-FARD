@@ -1,0 +1,84 @@
+import("../../kernel-canon/src/cid") as cid
+import("../../kernel-canon/src/types") as types
+import("../../kernel-bundle/src/validate") as validate
+import("../../kernel-witness/src/receipt") as receipt_mod
+import("std/rec") as rec
+
+// exec_bundle: validate a bundle, compute CIDs, call evaluator, form receipt
+//
+// bundle    -- a bundle record (see kernel-bundle/validate.fard)
+// evaluator -- fn(program, input, config) -> { ok: result } | { err: ... }
+//
+// Returns:
+//   { ok: { receipt: <canonical receipt>, receipt_cid: "sha256:..." } }
+//   { err: { code, message, phase, details } }
+
+fn canon_program(program) {
+  let t = rec.get(program, "t") in
+  if t == "text" then
+    types.make_text(rec.get(program, "v"))
+  else
+    types.make_cid(rec.get(program, "v"))
+}
+
+fn exec_bundle(bundle, evaluator) {
+  // Phase 1: validate bundle
+  let v = validate.validate_bundle(bundle) in
+  if v.ok != true then
+    { err: { code: v.code, message: v.message, phase: v.phase, details: v } }
+  else
+
+  // Phase 2: compute input CIDs
+  let program   = rec.get(bundle, "program") in
+  let input     = rec.get(bundle, "input") in
+  let config    = rec.get(bundle, "config") in
+  let deps      = rec.get(bundle, "deps") in
+  let trace_mode = rec.get(bundle, "trace_mode") in
+
+  let program_canon = canon_program(program) in
+  let input_canon   = input in
+
+  let program_cid_r = cid.cid_of(program_canon) in
+  if !rec.has(program_cid_r, "ok") then
+    { err: { code: "CID_FAILED", message: "failed to compute program CID", phase: "engine.cid", details: program_cid_r } }
+  else
+
+  let input_cid_r = cid.cid_of(input_canon) in
+  if !rec.has(input_cid_r, "ok") then
+    { err: { code: "CID_FAILED", message: "failed to compute input CID", phase: "engine.cid", details: input_cid_r } }
+  else
+
+  let bundle_cid_r = cid.cid_of(types.make_text("bundle")) in
+
+  // Phase 3: call evaluator
+  let eval_result = evaluator(program, input, config) in
+  let exit_code = if rec.has(eval_result, "ok") then "ok" else "err" in
+  let result_val = if rec.has(eval_result, "ok") then eval_result.ok else eval_result.err in
+  let result_canon = if result_val == null then types.make_null() else
+    if rec.has(result_val, "t") then result_val else types.make_text("result") in
+
+  let result_cid_r = cid.cid_of(result_canon) in
+  if !rec.has(result_cid_r, "ok") then
+    { err: { code: "CID_FAILED", message: "failed to compute result CID", phase: "engine.cid", details: result_cid_r } }
+  else
+
+  // Phase 4: form receipt
+  let r = receipt_mod.make_receipt(
+    bundle_cid_r.ok,
+    program_cid_r.ok,
+    input_cid_r.ok,
+    result_cid_r.ok,
+    exit_code,
+    "fard-0.5",
+    null, null, null, null, null
+  ) in
+
+  let rcid = receipt_mod.receipt_cid(r) in
+  if !rec.has(rcid, "ok") then
+    { err: { code: "RECEIPT_CID_FAILED", message: "failed to compute receipt CID", phase: "engine.receipt", details: rcid } }
+  else
+
+  { ok: { receipt: r, receipt_cid: rcid.ok, exit: exit_code, result: result_val } }
+}
+
+{ exec_bundle: exec_bundle }

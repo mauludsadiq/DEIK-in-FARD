@@ -1,0 +1,94 @@
+import("../../packages/kernel-exec/src/engine") as engine
+import("../../packages/kernel-canon/src/types") as types
+import("std/str") as str
+import("std/rec") as rec
+
+// A simple evaluator that just returns the input unchanged
+fn identity_eval(program, input, config) {
+  { ok: input }
+}
+
+// An evaluator that always fails
+fn failing_eval(program, input, config) {
+  { err: { code: "EVAL_FAILED", message: "deliberate failure" } }
+}
+
+// An evaluator that returns a canonical int
+fn int_eval(program, input, config) {
+  { ok: types.make_int(42) }
+}
+
+let good_bundle = {
+  program: { t: "text", v: "identity" },
+  input: { t: "null" },
+  trace_mode: "full"
+}
+
+test "exec_bundle returns ok on valid bundle" {
+  let r = engine.exec_bundle(good_bundle, identity_eval) in
+  rec.has(r, "ok")
+}
+
+test "exec_bundle result has receipt" {
+  let r = engine.exec_bundle(good_bundle, identity_eval) in
+  r.ok.receipt != null
+}
+
+test "exec_bundle result has receipt_cid" {
+  let r = engine.exec_bundle(good_bundle, identity_eval) in
+  str.starts_with(r.ok.receipt_cid, "sha256:")
+}
+
+test "exec_bundle exit is ok on success" {
+  let r = engine.exec_bundle(good_bundle, identity_eval) in
+  r.ok.exit == "ok"
+}
+
+test "exec_bundle exit is err on evaluator failure" {
+  let r = engine.exec_bundle(good_bundle, failing_eval) in
+  r.ok.exit == "err"
+}
+
+test "exec_bundle receipt is canonical receipt type" {
+  let r = engine.exec_bundle(good_bundle, identity_eval) in
+  r.ok.receipt.t == "receipt"
+}
+
+test "exec_bundle same bundle same receipt_cid" {
+  let a = engine.exec_bundle(good_bundle, identity_eval) in
+  let b = engine.exec_bundle(good_bundle, identity_eval) in
+  a.ok.receipt_cid == b.ok.receipt_cid
+}
+
+test "exec_bundle different input different receipt_cid" {
+  let b1 = {
+    program: { t: "text", v: "identity" },
+    input: { t: "null" },
+    trace_mode: "full"
+  } in
+  let b2 = {
+    program: { t: "text", v: "identity" },
+    input: { t: "bool", v: true },
+    trace_mode: "full"
+  } in
+  let a = engine.exec_bundle(b1, identity_eval) in
+  let b = engine.exec_bundle(b2, identity_eval) in
+  a.ok.receipt_cid != b.ok.receipt_cid
+}
+
+test "exec_bundle rejects invalid bundle" {
+  let bad_bundle = { input: { t: "null" }, trace_mode: "full" } in
+  let r = engine.exec_bundle(bad_bundle, identity_eval) in
+  rec.has(r, "err")
+}
+
+test "exec_bundle invalid bundle error has code" {
+  let bad_bundle = { input: { t: "null" }, trace_mode: "full" } in
+  let r = engine.exec_bundle(bad_bundle, identity_eval) in
+  r.err.code == "MISSING_FIELD"
+}
+
+test "exec_bundle with int evaluator result is canonical" {
+  let r = engine.exec_bundle(good_bundle, int_eval) in
+  r.ok.result.t == "int"
+}
