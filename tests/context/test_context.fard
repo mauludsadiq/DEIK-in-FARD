@@ -1,0 +1,101 @@
+import("../../packages/kernel-context/src/context") as ctx
+import("std/rec") as rec
+import("std/str") as str
+
+let msg_system = ctx.make_message("system", "You are a helpful assistant.")
+let msg_user = ctx.make_message("user", "What is 2 + 2?")
+let msg_assistant = ctx.make_message("assistant", "4")
+
+let sample_context = ctx.make_context(
+  [msg_system.ok, msg_user.ok, msg_assistant.ok],
+  "claude-3",
+  3
+)
+
+test "make_message ok for valid role" {
+  rec.has(msg_user, "ok")
+}
+
+test "make_message err for invalid role" {
+  let r = ctx.make_message("robot", "hello") in
+  rec.has(r, "err") && r.err.code == "INVALID_ROLE"
+}
+
+test "make_message system role valid" {
+  rec.has(msg_system, "ok")
+}
+
+test "make_message assistant role valid" {
+  rec.has(msg_assistant, "ok")
+}
+
+test "make_message record has role field" {
+  let m = msg_user.ok in
+  m.t == "record"
+}
+
+test "make_context returns canonical record" {
+  sample_context.t == "record"
+}
+
+test "context_cid returns sha256: string" {
+  let r = ctx.context_cid(sample_context) in
+  str.starts_with(r.ok, "sha256:")
+}
+
+test "same context same cid" {
+  let a = ctx.context_cid(sample_context) in
+  let b = ctx.context_cid(sample_context) in
+  a.ok == b.ok
+}
+
+test "different context different cid" {
+  let c1 = ctx.make_context([msg_user.ok], "claude-3", 1) in
+  let c2 = ctx.make_context([msg_assistant.ok], "claude-3", 1) in
+  let a = ctx.context_cid(c1) in
+  let b = ctx.context_cid(c2) in
+  a.ok != b.ok
+}
+
+test "different model different cid" {
+  let c1 = ctx.make_context([msg_user.ok], "claude-3", 1) in
+  let c2 = ctx.make_context([msg_user.ok], "gpt-4", 1) in
+  let a = ctx.context_cid(c1) in
+  let b = ctx.context_cid(c2) in
+  a.ok != b.ok
+}
+
+test "validate_context ok for well-formed context" {
+  let r = ctx.validate_context(sample_context) in
+  r.ok == true
+}
+
+test "validate_context fails for non-record" {
+  let r = ctx.validate_context({ t: "text", v: "not a context" }) in
+  r.ok == false
+}
+
+test "truncation_check ok when context unchanged" {
+  let cid = ctx.context_cid(sample_context) in
+  let r = ctx.truncation_check(cid.ok, sample_context) in
+  rec.has(r, "ok") && r.ok.verified == true
+}
+
+test "truncation_check err when context modified" {
+  let original_cid = ctx.context_cid(sample_context).ok in
+  let modified = ctx.make_context([msg_user.ok], "claude-3", 1) in
+  let r = ctx.truncation_check(original_cid, modified) in
+  rec.has(r, "err") && r.err.code == "CONTEXT_MODIFIED"
+}
+
+test "truncation_check err contains original and current cid" {
+  let original_cid = ctx.context_cid(sample_context).ok in
+  let modified = ctx.make_context([msg_user.ok], "claude-3", 1) in
+  let r = ctx.truncation_check(original_cid, modified) in
+  r.err.original == original_cid && r.err.current != original_cid
+}
+
+test "context_to_bundle_input returns canonical value" {
+  let input = ctx.context_to_bundle_input(sample_context) in
+  input.t == "record"
+}

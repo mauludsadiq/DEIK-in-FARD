@@ -1,0 +1,84 @@
+import("../../kernel-canon/src/types") as types
+import("../../kernel-canon/src/cid") as cid_mod
+import("std/rec") as rec
+import("std/list") as list
+import("std/str") as str
+
+// A context is a canonical representation of an LLM conversation window.
+// The same context always produces the same CID.
+//
+// message shape:
+//   { role: "system"|"user"|"assistant", content: <text> }
+//
+// context shape:
+//   { messages: [...], model: <text>, turn_count: <int> }
+
+let VALID_ROLES = ["system", "user", "assistant"]
+
+fn is_valid_role(role) {
+  list.any(VALID_ROLES, fn(r) { r == role })
+}
+
+fn make_message(role, content) {
+  if !is_valid_role(role) then
+    { err: { code: "INVALID_ROLE", message: str.concat("role must be system, user, or assistant — got: ", role) } }
+  else
+    { ok: types.make_record([
+      { k: "content", v: types.make_text(content) },
+      { k: "role",    v: types.make_text(role) }
+    ]) }
+}
+
+fn make_context(messages, model, turn_count) {
+  types.make_record([
+    { k: "messages",    v: types.make_list(messages) },
+    { k: "model",       v: types.make_text(model) },
+    { k: "turn_count",  v: types.make_int(turn_count) }
+  ])
+}
+
+fn context_cid(context) {
+  cid_mod.cid_of(context)
+}
+
+// context_to_bundle_input(context) -> canonical value suitable for bundle input field
+fn context_to_bundle_input(context) {
+  context
+}
+
+// validate_context(context) -> { ok: true } | { ok: false, code, message }
+fn validate_context(context) {
+  if rec.get(context, "t") != "record" then
+    { ok: false, code: "INVALID_CONTEXT", message: "context must be a canonical record" }
+  else
+    let v = rec.get(context, "v") in
+    if v == null then
+      { ok: false, code: "INVALID_CONTEXT", message: "context missing v field" }
+    else
+      { ok: true }
+}
+
+// truncation_check(original_cid, current_context)
+//
+// Verifies that the current context matches the original CID.
+// If they differ, the context has been truncated or modified.
+
+fn truncation_check(original_cid, current_context) {
+  let current_cid_r = context_cid(current_context) in
+  if !rec.has(current_cid_r, "ok") then
+    { err: { code: "CID_FAILED", message: "failed to compute current context CID" } }
+  else if current_cid_r.ok != original_cid then
+    { err: { code: "CONTEXT_MODIFIED", message: "context CID does not match original", original: original_cid, current: current_cid_r.ok } }
+  else
+    { ok: { cid: original_cid, verified: true } }
+}
+
+{
+  make_message: make_message,
+  make_context: make_context,
+  context_cid: context_cid,
+  context_to_bundle_input: context_to_bundle_input,
+  validate_context: validate_context,
+  truncation_check: truncation_check,
+  is_valid_role: is_valid_role
+}
