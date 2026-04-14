@@ -11,14 +11,16 @@ DEK produces a deterministic, content-addressable byte representation of typed v
     fardrun test --program tests/kernel/test_encode_vectors.fard
     fardrun test --program tests/kernel/test_encode_types.fard
     fardrun test --program tests/kernel/test_cid.fard
+    fardrun test --program tests/bundle/test_validate.fard
+    fardrun test --program tests/witness/test_receipt.fard
 
-## Phases
+## Phase ladder
 
-    Phase 1 - Canon         done  encode.fard, types.fard
-    Phase 2 - Addressing    done  cid.fard
-    Phase 3 - Bundle admission      validate.fard (next)
-    Phase 4 - Receipt formation     receipt.fard
-    Phase 5 - Execution             engine.fard
+    Phase 1 - Canon             done  encode.fard, types.fard
+    Phase 2 - Addressing        done  cid.fard
+    Phase 3 - Bundle admission  done  validate.fard
+    Phase 4 - Receipt formation done  receipt.fard
+    Phase 5 - Execution               engine.fard (next)
 
 ## Content addressing
 
@@ -33,6 +35,53 @@ Known stable CIDs:
     cid_of(null)         sha256:6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d
     cid_of(bool false)   sha256:4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a
     cid_of(bool true)    sha256:dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986
+
+## Bundle validation
+
+A bundle packages a program, input, and execution config for content-addressed execution.
+
+Required fields:
+
+    program     -- { t: "cid", v: "sha256:..." } or { t: "text", v: "<source>" }
+    input       -- any canonical value
+    trace_mode  -- "full" | "minimal" | "none"
+
+Optional fields:
+
+    deps        -- list of { name: text, cid: text } entries
+    oracle      -- { t: "cid", v: "sha256:..." }
+    config      -- record of runtime settings
+    version     -- text
+
+## Receipt formation
+
+A receipt is the cryptographic witness of a completed execution. It binds together
+all CIDs that uniquely identify what ran, what it consumed, and what it produced.
+
+    make_receipt(
+      bundle_cid, program_cid, input_cid, result_cid,
+      exit_code, kernel_version,
+      deps_cid, oracle_cid, trace_cid, step_count, parent_digest
+    ) -> canonical receipt value
+
+    receipt_cid(receipt) -> { ok: "sha256:..." }
+
+Exit codes: "ok" | "err" | "abort"
+
+Receipts are themselves canonical values and can be content-addressed.
+Parent digest enables receipt chaining across execution steps.
+
+## Known FARD language behaviour
+
+Inline if/else expressions inside list literals evaluate both branches eagerly.
+Extract conditional logic to helper functions to avoid this:
+
+    -- This crashes if x is null (both branches evaluated):
+    { k: "field", v: if x == null then default_val else types.make_text(x) }
+
+    -- This works correctly:
+    fn opt_text(x) { if x == null then { t: "option_none" } else types.make_text(x) }
+    { k: "field", v: opt_text(x) }
 
 ## Format
 
@@ -94,20 +143,30 @@ Wrapped types use raw records:
 
 ## Structure
 
-    packages/kernel-canon/src/
-      encode.fard   -- encoder (27 tag types)
-      types.fard    -- canonical value constructors
-      cid.fard      -- content addressing: sha256(encode(v))
-    tests/kernel/
-      test_encode_smoke.fard    -- basic run check (2 tests)
-      test_encode_vectors.fard  -- exact byte vector tests (11 tests)
-      test_encode_types.fard    -- full type coverage (18 tests)
-      test_cid.fard             -- content addressing (7 tests)
-    main.fard       -- demo: encodes {answer: 42, label: "DEK"} -> 59 bytes
+    packages/
+      kernel-canon/src/
+        encode.fard       -- encoder (27 tag types)
+        types.fard        -- canonical value constructors
+        cid.fard          -- content addressing: sha256(encode(v))
+      kernel-bundle/src/
+        validate.fard     -- bundle admission gatekeeper
+      kernel-witness/src/
+        receipt.fard      -- execution witness with CID chaining
+    tests/
+      kernel/
+        test_encode_smoke.fard    -- basic run check (2 tests)
+        test_encode_vectors.fard  -- exact byte vector tests (11 tests)
+        test_encode_types.fard    -- full type coverage (18 tests)
+        test_cid.fard             -- content addressing (7 tests)
+      bundle/
+        test_validate.fard        -- bundle validation (11 tests)
+      witness/
+        test_receipt.fard         -- receipt formation (13 tests)
+    main.fard             -- demo: encodes {answer: 42, label: "DEK"} -> 59 bytes
 
 ## Test summary
 
-    38 tests, 0 failures
+    51 tests, 0 failures
 
 ## Properties
 
