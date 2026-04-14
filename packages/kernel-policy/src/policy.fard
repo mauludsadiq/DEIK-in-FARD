@@ -1,0 +1,148 @@
+import("../../kernel-canon/src/types") as types
+import("../../kernel-canon/src/cid") as cid_mod
+import("../../kernel-license/src/license") as license
+import("../../kernel-verify/src/verify") as verify
+import("std/rec") as rec
+import("std/list") as list
+import("std/str") as str
+
+// A policy is a canonical record that declares what is permitted
+// for a class of executions. Policies are content-addressed so
+// versions are pinnable and auditable.
+//
+// Policy structure:
+//   allowed_programs   -- list of text (program CIDs) or null (allow all)
+//   allowed_oracles    -- list of text (oracle kinds) or null (allow all)
+//   allowed_exits      -- list of text ("ok"|"err"|"abort") or null (allow all)
+//   max_step_count     -- int or null (no cap)
+//   expires_at         -- int (unix ms) or null (no expiry)
+//   revoked            -- bool
+
+fn make_policy(allowed_programs, allowed_oracles, allowed_exits, max_step_count, expires_at) {
+  let ap = if allowed_programs == null then { t: "option_none" }
+           else types.make_list(list.map(allowed_programs, fn(c) { types.make_text(c) })) in
+  let ao = if allowed_oracles == null then { t: "option_none" }
+           else types.make_list(list.map(allowed_oracles, fn(k) { types.make_text(k) })) in
+  let ae = if allowed_exits == null then { t: "option_none" }
+           else types.make_list(list.map(allowed_exits, fn(e) { types.make_text(e) })) in
+  let ms = if max_step_count == null then { t: "option_none" }
+           else types.make_int(max_step_count) in
+  let ea = if expires_at == null then { t: "option_none" }
+           else types.make_int(expires_at) in
+  types.make_record([
+    { k: "allowed_exits",    v: ae },
+    { k: "allowed_oracles",  v: ao },
+    { k: "allowed_programs", v: ap },
+    { k: "expires_at",       v: ea },
+    { k: "max_step_count",   v: ms },
+    { k: "revoked",          v: types.make_bool(false) }
+  ])
+}
+
+fn policy_cid(policy) {
+  cid_mod.cid_of(policy)
+}
+
+fn revoke(policy) {
+  let entries = rec.get(policy, "v") in
+  let updated = list.map(entries, fn(entry) {
+    if rec.get(entry, "k") == "revoked" then
+      { k: "revoked", v: types.make_bool(true) }
+    else entry
+  }) in
+  types.make_record(updated)
+}
+
+fn is_revoked(policy) {
+  let entries = rec.get(policy, "v") in
+  let found = list.find(entries, fn(e) { rec.get(e, "k") == "revoked" }) in
+  if rec.has(found, "some") then
+    let v = rec.get(found.some, "v") in
+    rec.get(v, "v") == true
+  else false
+}
+
+fn get_field(policy, key) {
+  let entries = rec.get(policy, "v") in
+  let found = list.find(entries, fn(e) { rec.get(e, "k") == key }) in
+  if rec.has(found, "some") then rec.get(found.some, "v") else null
+}
+
+fn is_option_none(v) {
+  v != null && rec.get(v, "t") == "option_none"
+}
+
+fn list_contains_text(lst, target) {
+  let items = rec.get(lst, "v") in
+  if items == null then false else
+  list.any(items, fn(item) { rec.get(item, "v") == target })
+}
+
+fn check_program(policy, program_cid) {
+  let ap = get_field(policy, "allowed_programs") in
+  if ap == null || is_option_none(ap) then true else
+  list_contains_text(ap, program_cid)
+}
+
+fn check_oracle(policy, oracle_kind) {
+  let ao = get_field(policy, "allowed_oracles") in
+  if ao == null || is_option_none(ao) then true else
+  list_contains_text(ao, oracle_kind)
+}
+
+fn check_exit(policy, exit_code) {
+  let ae = get_field(policy, "allowed_exits") in
+  if ae == null || is_option_none(ae) then true else
+  list_contains_text(ae, exit_code)
+}
+
+fn check_expiry(policy, now_ms) {
+  let ea = get_field(policy, "expires_at") in
+  if ea == null || is_option_none(ea) then true else
+  let exp = rec.get(ea, "v") in
+  now_ms < exp
+}
+
+fn check_step_count(policy, steps) {
+  let ms = get_field(policy, "max_step_count") in
+  if ms == null || is_option_none(ms) then true else
+  let cap = rec.get(ms, "v") in
+  steps <= cap
+}
+
+// enforce(policy, program_cid, exit_code, oracle_kinds, step_count, now_ms)
+//
+// Checks all policy constraints.
+// Returns { ok: true } or { ok: false, code, message, details }
+
+fn enforce(policy, program_cid, exit_code, oracle_kinds, step_count, now_ms) {
+  if is_revoked(policy) then
+    { ok: false, code: "POLICY_REVOKED", message: "policy has been revoked", phase: "policy.enforce" }
+  else if !check_expiry(policy, now_ms) then
+    { ok: false, code: "POLICY_EXPIRED", message: "policy has expired", phase: "policy.enforce" }
+  else if !check_program(policy, program_cid) then
+    { ok: false, code: "PROGRAM_NOT_ALLOWED", message: str.concat("program not permitted by policy: ", program_cid), phase: "policy.enforce" }
+  else if !check_exit(policy, exit_code) then
+    { ok: false, code: "EXIT_NOT_ALLOWED", message: str.concat("exit code not permitted by policy: ", exit_code), phase: "policy.enforce" }
+  else if !check_step_count(policy, step_count) then
+    { ok: false, code: "STEP_CAP_EXCEEDED", message: "execution exceeded maximum step count", phase: "policy.enforce" }
+  else
+    let oracle_violation = list.find(oracle_kinds, fn(kind) { !check_oracle(policy, kind) }) in
+    if rec.has(oracle_violation, "some") then
+      { ok: false, code: "ORACLE_NOT_ALLOWED", message: str.concat("oracle kind not permitted by policy: ", oracle_violation.some), phase: "policy.enforce" }
+    else
+      { ok: true }
+}
+
+{
+  make_policy: make_policy,
+  policy_cid: policy_cid,
+  revoke: revoke,
+  is_revoked: is_revoked,
+  check_program: check_program,
+  check_oracle: check_oracle,
+  check_exit: check_exit,
+  check_expiry: check_expiry,
+  check_step_count: check_step_count,
+  enforce: enforce
+}

@@ -1,0 +1,144 @@
+import("../../packages/kernel-policy/src/policy") as policy
+import("std/rec") as rec
+import("std/str") as str
+
+let program_a = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+let program_b = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+let open_policy = policy.make_policy(null, null, null, null, null)
+
+let strict_policy = policy.make_policy(
+  [program_a],
+  ["time", "sensor"],
+  ["ok"],
+  1000,
+  9999999999999
+)
+
+let expired_policy = policy.make_policy(null, null, null, null, 1)
+
+let now_ms = 1700000000000
+
+test "make_policy returns canonical record" {
+  open_policy.t == "record"
+}
+
+test "policy_cid returns sha256: string" {
+  let r = policy.policy_cid(open_policy) in
+  str.starts_with(r.ok, "sha256:")
+}
+
+test "same policy same cid" {
+  let a = policy.policy_cid(open_policy) in
+  let b = policy.policy_cid(open_policy) in
+  a.ok == b.ok
+}
+
+test "different policies different cids" {
+  let a = policy.policy_cid(open_policy) in
+  let b = policy.policy_cid(strict_policy) in
+  a.ok != b.ok
+}
+
+test "open policy not revoked" {
+  !policy.is_revoked(open_policy)
+}
+
+test "revoke marks policy as revoked" {
+  let r = policy.revoke(open_policy) in
+  policy.is_revoked(r)
+}
+
+test "enforce ok for open policy" {
+  let r = policy.enforce(open_policy, program_a, "ok", [], 0, now_ms) in
+  r.ok == true
+}
+
+test "enforce ok for strict policy with allowed program" {
+  let r = policy.enforce(strict_policy, program_a, "ok", ["time"], 100, now_ms) in
+  r.ok == true
+}
+
+test "enforce fails for revoked policy" {
+  let r = policy.enforce(policy.revoke(open_policy), program_a, "ok", [], 0, now_ms) in
+  r.ok == false && r.code == "POLICY_REVOKED"
+}
+
+test "enforce fails for expired policy" {
+  let r = policy.enforce(expired_policy, program_a, "ok", [], 0, now_ms) in
+  r.ok == false && r.code == "POLICY_EXPIRED"
+}
+
+test "enforce fails for unlicensed program" {
+  let r = policy.enforce(strict_policy, program_b, "ok", ["time"], 100, now_ms) in
+  r.ok == false && r.code == "PROGRAM_NOT_ALLOWED"
+}
+
+test "enforce fails for disallowed exit code" {
+  let r = policy.enforce(strict_policy, program_a, "err", ["time"], 100, now_ms) in
+  r.ok == false && r.code == "EXIT_NOT_ALLOWED"
+}
+
+test "enforce fails for disallowed oracle kind" {
+  let r = policy.enforce(strict_policy, program_a, "ok", ["http"], 100, now_ms) in
+  r.ok == false && r.code == "ORACLE_NOT_ALLOWED"
+}
+
+test "enforce fails for exceeded step count" {
+  let r = policy.enforce(strict_policy, program_a, "ok", ["time"], 9999, now_ms) in
+  r.ok == false && r.code == "STEP_CAP_EXCEEDED"
+}
+
+test "enforce error has phase field" {
+  let r = policy.enforce(policy.revoke(open_policy), program_a, "ok", [], 0, now_ms) in
+  r.phase == "policy.enforce"
+}
+
+test "check_program true for allowed program" {
+  policy.check_program(strict_policy, program_a)
+}
+
+test "check_program false for disallowed program" {
+  !policy.check_program(strict_policy, program_b)
+}
+
+test "check_program true for open policy" {
+  policy.check_program(open_policy, program_b)
+}
+
+test "check_oracle true for allowed kind" {
+  policy.check_oracle(strict_policy, "time")
+}
+
+test "check_oracle false for disallowed kind" {
+  !policy.check_oracle(strict_policy, "http")
+}
+
+test "check_exit true for allowed exit" {
+  policy.check_exit(strict_policy, "ok")
+}
+
+test "check_exit false for disallowed exit" {
+  !policy.check_exit(strict_policy, "err")
+}
+
+test "check_step_count true within cap" {
+  policy.check_step_count(strict_policy, 999)
+}
+
+test "check_step_count false over cap" {
+  !policy.check_step_count(strict_policy, 1001)
+}
+
+test "check_expiry true before expiry" {
+  policy.check_expiry(strict_policy, now_ms)
+}
+
+test "check_expiry false after expiry" {
+  !policy.check_expiry(expired_policy, now_ms)
+}
+
+test "enforce ok with no oracles" {
+  let r = policy.enforce(strict_policy, program_a, "ok", [], 0, now_ms) in
+  r.ok == true
+}
