@@ -1,0 +1,103 @@
+import("../../packages/kernel-bundle/src/validate") as validate
+import("../../packages/kernel-canon/src/types") as types
+
+let good_bundle = {
+  program: { t: "text", v: "42" },
+  input: { t: "null" },
+  trace_mode: "full"
+}
+
+let good_bundle_cid_program = {
+  program: { t: "cid", v: "sha256:6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d" },
+  input: { t: "null" },
+  trace_mode: "minimal"
+}
+
+test "valid bundle passes" {
+  let r = validate.validate_bundle(good_bundle) in
+  r.ok == true
+}
+
+test "valid bundle with cid program passes" {
+  let r = validate.validate_bundle(good_bundle_cid_program) in
+  r.ok == true
+}
+
+test "valid bundle trace_mode none passes" {
+  let r = validate.validate_bundle({
+    program: { t: "text", v: "1" },
+    input: { t: "null" },
+    trace_mode: "none"
+  }) in
+  r.ok == true
+}
+
+test "missing program fails" {
+  let r = validate.validate_bundle({
+    input: { t: "null" },
+    trace_mode: "full"
+  }) in
+  r.ok == false && r.code == "MISSING_FIELD"
+}
+
+test "missing input fails" {
+  let r = validate.validate_bundle({
+    program: { t: "text", v: "1" },
+    trace_mode: "full"
+  }) in
+  r.ok == false && r.code == "MISSING_FIELD"
+}
+
+test "missing trace_mode fails" {
+  let r = validate.validate_bundle({
+    program: { t: "text", v: "1" },
+    input: { t: "null" }
+  }) in
+  r.ok == false && r.code == "MISSING_FIELD"
+}
+
+test "invalid trace_mode fails" {
+  let r = validate.validate_bundle({
+    program: { t: "text", v: "1" },
+    input: { t: "null" },
+    trace_mode: "verbose"
+  }) in
+  r.ok == false && r.code == "INVALID_FIELD"
+}
+
+test "invalid program type fails" {
+  let r = validate.validate_bundle({
+    program: { t: "int", v: 42 },
+    input: { t: "null" },
+    trace_mode: "full"
+  }) in
+  r.ok == false && r.code == "INVALID_FIELD"
+}
+
+test "valid deps passes" {
+  let r = validate.validate_bundle({
+    program: { t: "text", v: "1" },
+    input: { t: "null" },
+    trace_mode: "full",
+    deps: [{ name: "mylib", cid: "sha256:abc" }]
+  }) in
+  r.ok == true
+}
+
+test "invalid dep missing cid fails" {
+  let r = validate.validate_bundle({
+    program: { t: "text", v: "1" },
+    input: { t: "null" },
+    trace_mode: "full",
+    deps: [{ name: "mylib" }]
+  }) in
+  r.ok == false && r.code == "INVALID_FIELD"
+}
+
+test "phase is bundle.validate on failure" {
+  let r = validate.validate_bundle({
+    input: { t: "null" },
+    trace_mode: "full"
+  }) in
+  r.phase == "bundle.validate"
+}

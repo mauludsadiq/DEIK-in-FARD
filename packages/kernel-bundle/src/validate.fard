@@ -1,0 +1,73 @@
+import("std/rec") as rec
+import("std/list") as list
+import("std/str") as str
+
+// A bundle is a canonical record with these required fields:
+//   program   -- { t: "cid", v: "sha256:..." }  or { t: "text", v: "<inline source>" }
+//   input     -- any canonical value
+//   trace_mode -- "full" | "minimal" | "none"
+//
+// Optional fields:
+//   deps      -- list of { name: text, cid: text } entries
+//   oracle    -- { t: "cid", v: "sha256:..." } or null
+//   config    -- record of runtime settings
+//   version   -- text
+
+let VALID_TRACE_MODES = ["full", "minimal", "none"]
+
+fn is_text(v) {
+  rec.has(v, "t") && rec.get(v, "t") == "text"
+}
+
+fn is_cid(v) {
+  rec.has(v, "t") && rec.get(v, "t") == "cid"
+}
+
+fn is_valid_program(p) {
+  if p == null then false else
+  is_text(p) || is_cid(p)
+}
+
+fn is_valid_trace_mode(m) {
+  list.any(VALID_TRACE_MODES, fn(x) { x == m })
+}
+
+fn is_valid_dep(d) {
+  if rec.has(d, "name") && rec.has(d, "cid") then
+    let name = rec.get(d, "name") in
+    let cid = rec.get(d, "cid") in
+    name != null && cid != null
+  else false
+}
+
+fn is_valid_deps(deps) {
+  if deps == null then true else
+  list.all(deps, fn(d) { is_valid_dep(d) })
+}
+
+fn fail(code, message, details) {
+  { ok: false, code: code, phase: "bundle.validate", message: message, details: details }
+}
+
+fn validate_bundle(bundle) {
+  if rec.has(bundle, "program") == false then
+    fail("MISSING_FIELD", "bundle missing required field: program", { field: "program" })
+  else if rec.has(bundle, "input") == false then
+    fail("MISSING_FIELD", "bundle missing required field: input", { field: "input" })
+  else if rec.has(bundle, "trace_mode") == false then
+    fail("MISSING_FIELD", "bundle missing required field: trace_mode", { field: "trace_mode" })
+  else
+    let program = rec.get(bundle, "program") in
+    let trace_mode = rec.get(bundle, "trace_mode") in
+    let deps = rec.get(bundle, "deps") in
+    if !is_valid_program(program) then
+      fail("INVALID_FIELD", "bundle.program must be a cid or text canonical value", { field: "program", got: program })
+    else if !is_valid_trace_mode(trace_mode) then
+      fail("INVALID_FIELD", str.concat("bundle.trace_mode must be full, minimal, or none — got: ", str.from(trace_mode)), { field: "trace_mode", got: trace_mode })
+    else if !is_valid_deps(deps) then
+      fail("INVALID_FIELD", "bundle.deps entries must each have name and cid fields", { field: "deps" })
+    else
+      { ok: true }
+}
+
+{ validate_bundle: validate_bundle }
