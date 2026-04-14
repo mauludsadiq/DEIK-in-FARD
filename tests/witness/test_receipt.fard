@@ -1,0 +1,82 @@
+import("../../packages/kernel-witness/src/receipt") as receipt
+import("std/str") as str
+
+
+let r0 = receipt.make_receipt(
+  "sha256:aaaa",
+  "sha256:bbbb",
+  "sha256:cccc",
+  "sha256:dddd",
+  "ok",
+  "fard-0.5",
+  null, null, null, null, null
+)
+
+test "make_receipt returns a receipt canonical value" {
+  r0.t == "receipt"
+}
+
+test "receipt has v field" {
+  r0.v != null
+}
+
+test "receipt_cid returns ok" {
+  let c = receipt.receipt_cid(r0) in
+  c.ok != null
+}
+
+test "receipt_cid starts with sha256:" {
+  let c = receipt.receipt_cid(r0) in
+  str.starts_with(c.ok, "sha256:")
+}
+
+test "same receipt same cid" {
+  let a = receipt.receipt_cid(r0) in
+  let b = receipt.receipt_cid(r0) in
+  a.ok == b.ok
+}
+
+test "different exit different cid" {
+  let r_err = receipt.make_receipt(
+    "sha256:aaaa", "sha256:bbbb", "sha256:cccc", "sha256:dddd",
+    "err", "fard-0.5", null, null, null, null, null
+  ) in
+  let a = receipt.receipt_cid(r0) in
+  let b = receipt.receipt_cid(r_err) in
+  a.ok != b.ok
+}
+
+test "is_valid_exit ok" {
+  receipt.is_valid_exit("ok")
+}
+
+test "is_valid_exit err" {
+  receipt.is_valid_exit("err")
+}
+
+test "is_valid_exit abort" {
+  receipt.is_valid_exit("abort")
+}
+
+test "is_valid_exit rejects unknown" {
+  !receipt.is_valid_exit("success")
+}
+
+test "validate_receipt accepts well-formed receipt" {
+  let r = receipt.validate_receipt(r0) in
+  r.ok == true
+}
+
+test "validate_receipt rejects non-receipt" {
+  let r = receipt.validate_receipt({ t: "record", v: [] }) in
+  r.ok == false
+}
+
+test "receipt with parent_digest chains" {
+  let r = receipt.make_receipt(
+    "sha256:aaaa", "sha256:bbbb", "sha256:cccc", "sha256:dddd",
+    "ok", "fard-0.5", null, null, null, 100,
+    "sha256:parent000"
+  ) in
+  r.t == "receipt"
+}

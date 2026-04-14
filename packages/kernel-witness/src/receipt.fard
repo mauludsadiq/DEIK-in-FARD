@@ -1,0 +1,52 @@
+import("../../kernel-canon/src/cid") as cid
+import("../../kernel-canon/src/types") as types
+import("std/rec") as rec
+
+fn opt_text(x) {
+  if x == null then { t: "option_none" } else types.make_text(x)
+}
+
+fn opt_int(x) {
+  if x == null then { t: "option_none" } else types.make_int(x)
+}
+
+fn make_receipt(bundle_cid, program_cid, input_cid, result_cid, exit_code, kernel_version, deps_cid, oracle_cid, trace_cid, step_count, parent_digest) {
+  let entries = types.make_list([
+    types.make_record([{ k: "bundle_cid",     v: types.make_text(bundle_cid) }]),
+    types.make_record([{ k: "deps_cid",       v: opt_text(deps_cid) }]),
+    types.make_record([{ k: "exit",           v: types.make_text(exit_code) }]),
+    types.make_record([{ k: "input_cid",      v: types.make_text(input_cid) }]),
+    types.make_record([{ k: "kernel_version", v: types.make_text(kernel_version) }]),
+    types.make_record([{ k: "oracle_cid",     v: opt_text(oracle_cid) }]),
+    types.make_record([{ k: "parent_digest",  v: opt_text(parent_digest) }]),
+    types.make_record([{ k: "program_cid",    v: types.make_text(program_cid) }]),
+    types.make_record([{ k: "result_cid",     v: types.make_text(result_cid) }]),
+    types.make_record([{ k: "step_count",     v: opt_int(step_count) }]),
+    types.make_record([{ k: "trace_cid",      v: opt_text(trace_cid) }])
+  ]) in
+  { t: "receipt", v: entries }
+}
+
+fn receipt_cid(r) {
+  cid.cid_of(r)
+}
+
+fn is_valid_exit(exit_code) {
+  exit_code == "ok" || exit_code == "err" || exit_code == "abort"
+}
+
+fn validate_receipt(r) {
+  if !rec.has(r, "t") then
+    { ok: false, code: "INVALID_RECEIPT", message: "receipt must be a canonical record" }
+  else if rec.get(r, "t") != "receipt" then
+    { ok: false, code: "INVALID_RECEIPT", message: "receipt t field must be receipt" }
+  else
+    { ok: true }
+}
+
+{
+  make_receipt: make_receipt,
+  receipt_cid: receipt_cid,
+  validate_receipt: validate_receipt,
+  is_valid_exit: is_valid_exit
+}
