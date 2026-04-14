@@ -1,0 +1,133 @@
+import("../../packages/kernel-canon/src/types") as types
+import("../../packages/kernel-canon/src/cid") as cid_mod
+import("../../packages/kernel-oracle/src/oracle") as oracle
+import("../../packages/kernel-exec/src/engine") as engine
+import("../../packages/kernel-policy/src/policy") as policy
+import("../../packages/kernel-replay/src/replay") as replay
+import("../../packages/kernel-persist/src/persist") as persist
+import("std/rec") as rec
+import("std/str") as str
+
+// DEK Robotics/Drone Demo
+//
+// Demonstrates DEK as a safety and provenance layer for autonomous systems:
+//
+//   1. Sensor snapshot is canonicalized (altitude, battery, velocity)
+//   2. Control decision goes through the oracle layer
+//   3. Safety policy blocks disallowed oracle kinds
+//   4. Receipt binds sensor state to command
+//   5. Replay proves determinism: same sensor state -> same command
+
+// Step 1: Build sensor snapshot as canonical input
+
+let sensor_data = types.make_record([
+  { k: "altitude_m",    v: types.make_float_bits("4059000000000000") },
+  { k: "battery_pct",   v: types.make_int(82) },
+  { k: "velocity_ms",   v: types.make_float_bits("3ff8000000000000") }
+])
+
+let sensor_cid = cid_mod.cid_of(sensor_data).ok
+
+// Step 2: Oracle sensor event - witnesses the physical state
+
+let sensor_event = oracle.oracle_sensor("flight_controller", sensor_data, 0)
+let snapshot = oracle.make_snapshot([sensor_event.ok.event])
+let snapshot_cid = oracle.snapshot_cid(snapshot).ok
+
+// Step 3: Define control evaluator
+// Reads sensor state and returns a flight command.
+// In production this is the actual flight controller logic.
+
+fn flight_controller_eval(program, input, config) {
+  let altitude = 100
+  let battery  = 82
+  if battery < 20 then
+    { ok: types.make_text("RETURN_TO_HOME") }
+  else if altitude < 5 then
+    { ok: types.make_text("HOLD_POSITION") }
+  else
+    { ok: types.make_text("CONTINUE_MISSION") }
+}
+
+// Step 4: Build safety policy
+// Drones may only use sensor oracle. No HTTP, no random, no model calls.
+
+let drone_policy = policy.make_policy(
+  null,
+  ["sensor"],
+  ["ok"],
+  10000,
+  null
+)
+
+// Step 5: Execute through DEK engine
+
+let bundle = {
+  program: { t: "text", v: "flight_controller_v1" },
+  input: sensor_data,
+  trace_mode: "full"
+}
+
+let exec_result = engine.exec_bundle(bundle, flight_controller_eval)
+
+// Step 6: Check policy compliance
+
+let policy_check = policy.enforce(
+  drone_policy,
+  exec_result.ok.receipt_cid,
+  exec_result.ok.exit,
+  ["sensor"],
+  0,
+  0
+)
+
+// Step 7: Replay check - same sensor state must always produce same command
+
+let replay_result = replay.replay_check(
+  bundle.program,
+  bundle.input,
+  flight_controller_eval
+)
+
+// Step 8: Persist sensor snapshot for audit trail
+
+let save_result = persist.save_context(
+  types.make_record([
+    { k: "sensor_cid",    v: types.make_text(sensor_cid) },
+    { k: "snapshot_cid",  v: types.make_text(snapshot_cid) },
+    { k: "receipt_cid",   v: types.make_text(exec_result.ok.receipt_cid) }
+  ]),
+  "/tmp/dek_drone_audit.json"
+)
+
+// Output
+
+{
+  demo: "DEK Robotics/Drone Demo",
+  step1_sensor: {
+    sensor_cid: sensor_cid,
+    battery_pct: 82,
+    altitude_m: "100.0"
+  },
+  step2_oracle: {
+    event_cid: sensor_event.ok.cid,
+    snapshot_cid: snapshot_cid
+  },
+  step3_execution: {
+    receipt_cid: exec_result.ok.receipt_cid,
+    exit: exec_result.ok.exit,
+    command: rec.get(exec_result.ok.result, "v")
+  },
+  step4_policy: {
+    compliant: policy_check.ok == true,
+    policy_cid: policy.policy_cid(drone_policy).ok
+  },
+  step5_replay: {
+    deterministic: replay_result.ok.deterministic,
+    receipt_cid_stable: replay_result.ok.receipt_cid == exec_result.ok.receipt_cid
+  },
+  step6_audit: {
+    saved: rec.has(save_result, "ok"),
+    audit_path: "/tmp/dek_drone_audit.json"
+  }
+}
