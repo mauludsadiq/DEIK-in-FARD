@@ -9,6 +9,8 @@ DEK makes context, program identity, execution, licensing, and chain of custody 
 ## Quick start
 
     fardrun run --program main.fard --out out/run_main
+
+    # Unit tests
     fardrun test --program tests/kernel/test_encode_smoke.fard
     fardrun test --program tests/kernel/test_encode_vectors.fard
     fardrun test --program tests/kernel/test_encode_types.fard
@@ -23,6 +25,16 @@ DEK makes context, program identity, execution, licensing, and chain of custody 
     fardrun test --program tests/replay/test_replay.fard
     fardrun test --program tests/oracle/test_oracle.fard
     fardrun test --program tests/policy/test_policy.fard
+
+    # Compliance vectors
+    fardrun test --program compliance/vectors/comp_canonical_bytes.fard
+    fardrun test --program compliance/vectors/comp_cid.fard
+    fardrun test --program compliance/vectors/comp_bundle.fard
+    fardrun test --program compliance/vectors/comp_receipt.fard
+    fardrun test --program compliance/vectors/comp_policy.fard
+    fardrun test --program compliance/vectors/comp_context.fard
+    fardrun test --program compliance/vectors/comp_license.fard
+    fardrun test --program compliance/vectors/comp_replay.fard
 
 ## Architecture
 
@@ -67,40 +79,69 @@ DEK makes context, program identity, execution, licensing, and chain of custody 
     Phase 11 - Oracle boundary   done  oracle.fard
     Phase 12 - Policy layer      done  policy.fard
 
-    Next: compliance suite, reference demos, whitepaper
+    Next: reference demos, whitepaper, service boundary
 
-## Test summary
+## Test and compliance summary
 
-    183 tests, 0 failures
+    183 unit tests,  0 failures
+     85 compliance vectors, 0 failures
 
-    tests/kernel/test_encode_smoke.fard      2 tests
-    tests/kernel/test_encode_vectors.fard   11 tests
-    tests/kernel/test_encode_types.fard     18 tests
-    tests/kernel/test_cid.fard               7 tests
-    tests/bundle/test_validate.fard         11 tests
-    tests/witness/test_receipt.fard         13 tests
-    tests/exec/test_engine.fard             11 tests
-    tests/verify/test_verify.fard           12 tests
-    tests/license/test_license.fard         17 tests
-    tests/context/test_context.fard         16 tests
-    tests/persist/test_persist.fard         14 tests
-    tests/replay/test_replay.fard           13 tests
-    tests/oracle/test_oracle.fard           22 tests
-    tests/policy/test_policy.fard           27 tests
+    Unit tests:
+      tests/kernel/test_encode_smoke.fard      2
+      tests/kernel/test_encode_vectors.fard   11
+      tests/kernel/test_encode_types.fard     18
+      tests/kernel/test_cid.fard               7
+      tests/bundle/test_validate.fard         11
+      tests/witness/test_receipt.fard         13
+      tests/exec/test_engine.fard             11
+      tests/verify/test_verify.fard           12
+      tests/license/test_license.fard         17
+      tests/context/test_context.fard         16
+      tests/persist/test_persist.fard         14
+      tests/replay/test_replay.fard           13
+      tests/oracle/test_oracle.fard           22
+      tests/policy/test_policy.fard           27
+
+    Compliance vectors:
+      compliance/vectors/comp_canonical_bytes.fard   25
+      compliance/vectors/comp_cid.fard               12
+      compliance/vectors/comp_bundle.fard            12
+      compliance/vectors/comp_receipt.fard           10
+      compliance/vectors/comp_policy.fard            12
+      compliance/vectors/comp_context.fard           11
+      compliance/vectors/comp_license.fard            8
+      compliance/vectors/comp_replay.fard             7
+
+## Compliance
+
+The compliance suite contains normative test vectors derived from the frozen
+DEK v1 spec. Any conforming implementation in any language must produce
+identical results for all vectors.
+
+Stable CIDs that every implementation must reproduce:
+
+    cid(null)         sha256:6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d
+    cid(bool false)   sha256:4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a
+    cid(bool true)    sha256:dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986
+    cid(int 0)        sha256:dc4c8669df128318c5790c414c870cc76c585268552851e78d3ee8604dbec0e3
+    cid(text "")      sha256:6c449f91c1adbf3945ad078f5f875c0c1f133f246c4588668faffbe23a3c195f
+    cid(list [])      sha256:7e2e8b49f93a4f1fcd3d8c53db08bcd2fb714f1d91d4db7ed0b8786c572f9164
+    cid(record [])    sha256:92c0a3cd8b571ac5634aa066fcc63d7b62155c36126a29231d97692ff2944875
+    cid(option_none)  sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b
 
 ## Frozen spec
 
     spec/dek_v1/
-      canonical_values_v1.md
-      canonical_bytes_v1.md
-      bundle_v1.md
-      receipt_v1.md
-      verify_v1.md
-      license_registry_v1.md
-      context_v1.md
-      persist_v1.md
-      oracle_v1.md
-      policy_v1.md
+      canonical_values_v1.md    -- type definitions and constructors
+      canonical_bytes_v1.md     -- byte encoding format and tag table
+      bundle_v1.md              -- bundle schema and validation rules
+      receipt_v1.md             -- receipt structure and CID chaining
+      verify_v1.md              -- verification contract
+      license_registry_v1.md   -- license registry schema
+      context_v1.md             -- context binding and truncation detection
+      persist_v1.md             -- persistence contract
+      oracle_v1.md              -- oracle boundary and event schema
+      policy_v1.md              -- policy enforcement contract
 
 ## Verification
 
@@ -129,17 +170,9 @@ Internal phases:
 ## Policy enforcement
 
     enforce(policy, program_cid, exit_code, oracle_kinds, step_count, now_ms)
-    -> { ok: true }
-    -> { ok: false, code, message, phase: "policy.enforce" }
 
-Policy constraints (checked in order):
-
-    revoked          policy has been revoked
-    expires_at       unix ms expiry timestamp
-    allowed_programs list of permitted program CIDs
-    allowed_exits    list of permitted exit codes
-    max_step_count   execution step cap
-    allowed_oracles  list of permitted oracle kinds
+Constraints checked in order:
+    revoked, expires_at, allowed_programs, allowed_exits, max_step_count, allowed_oracles
 
 null in any list field means allow all.
 
@@ -153,15 +186,12 @@ null in any list field means allow all.
     oracle_model_call(model, prompt, response, seq)
 
 Each returns { ok: { value, event, cid } }.
-Oracle events are sequenced and content-addressed.
-A snapshot of all events is itself a canonical value.
+A snapshot of all events is a canonical value with its own CID.
 
 ## Replay
 
     replay_check(program, input, evaluator)
     -> { ok: { receipt_cid, deterministic: true, runs: 2 } }
-
-Runs execution twice and verifies receipt CIDs match.
 
 ## Licensing
 
@@ -172,23 +202,12 @@ Runs execution twice and verifies receipt CIDs match.
 
 ## Context integrity
 
-    let context = ctx.make_context([msg.ok, ...], "claude-3", turn_count)
+    let context = ctx.make_context([msg.ok, ...], "model-name", turn_count)
     let original_cid = ctx.context_cid(context).ok
-    persist.save_context(context, "contexts/session_001.json")
+    persist.save_context(context, "contexts/session.json")
     ctx.truncation_check(original_cid, current_context)
-
-## Content addressing
-
-Known stable CIDs:
-
-    cid(null)        sha256:6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d
-    cid(false)       sha256:4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a
-    cid(true)        sha256:dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986
-
-## Bundle format
-
-Required: program, input, trace_mode
-Optional: deps, oracle, config, version
+    -- { ok: { cid, verified: true } }
+    -- { err: { code: "CONTEXT_MODIFIED", original, current } }
 
 ## Encoding format
 
@@ -240,4 +259,5 @@ Extract to helper functions:
 - Replayable: determinism provable by running twice
 - Oracle-transparent: every non-deterministic call is witnessed
 - Policy-enforced: programs/oracles/exits/steps/expiry/revocation
+- Conformance-testable: 85 normative compliance vectors
 - FARD-native: no external dependencies, runs under fardrun
