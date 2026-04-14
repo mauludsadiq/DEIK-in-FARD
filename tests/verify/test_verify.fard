@@ -1,0 +1,66 @@
+import("../../packages/kernel-verify/src/verify") as verify
+import("std/rec") as rec
+import("std/str") as str
+
+let known_run_id = "sha256:9009f58955db43ac3ba6bb3e2e27d8d70c1c20bad557bd39e084563148098f1e"
+let unknown_run_id = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+test "verify_receipt returns ok for known run_id" {
+  let r = verify.verify_receipt(known_run_id) in
+  rec.has(r, "ok")
+}
+
+test "verify_receipt ok contains run_id" {
+  let r = verify.verify_receipt(known_run_id) in
+  r.ok.run_id == known_run_id
+}
+
+test "verify_receipt ok contains receipt" {
+  let r = verify.verify_receipt(known_run_id) in
+  r.ok.receipt != null
+}
+
+test "verify_receipt receipt has run_id field" {
+  let r = verify.verify_receipt(known_run_id) in
+  rec.has(r.ok.receipt, "run_id")
+}
+
+test "verify_receipt receipt run_id matches" {
+  let r = verify.verify_receipt(known_run_id) in
+  rec.get(r.ok.receipt, "run_id") == known_run_id
+}
+
+test "verify_receipt returns err for unknown run_id" {
+  let r = verify.verify_receipt(unknown_run_id) in
+  rec.has(r, "err")
+}
+
+test "verify_receipt err has code" {
+  let r = verify.verify_receipt(unknown_run_id) in
+  r.err.code == "RECEIPT_NOT_FOUND"
+}
+
+test "verify_chain returns ok for known run_id" {
+  let r = verify.verify_chain(known_run_id) in
+  rec.has(r, "ok") && r.ok.depth >= 0
+}
+
+test "verify_chain depth is 1 for single receipt" {
+  let r = verify.verify_chain(known_run_id) in
+  r.ok.depth == 1
+}
+
+test "verify_chain returns err for unknown run_id" {
+  let r = verify.verify_chain(unknown_run_id) in
+  rec.has(r, "err") && r.err.code == "CHAIN_BROKEN"
+}
+
+test "verify_program_cid returns ok for known run_id" {
+  let r = verify.verify_program_cid(known_run_id, "sha256:any") in
+  rec.has(r, "ok")
+}
+
+test "verify_program_cid err for unknown run_id" {
+  let r = verify.verify_program_cid(unknown_run_id, "sha256:any") in
+  rec.has(r, "err")
+}

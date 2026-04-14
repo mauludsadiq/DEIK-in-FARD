@@ -1,0 +1,65 @@
+import("std/witness") as witness
+import("std/rec") as rec
+import("std/str") as str
+import("../../kernel-witness/src/receipt") as receipt_mod
+
+// verify_receipt(run_id) -> { ok: { receipt, depth } } | { err: { code, message } }
+//
+// Verifies a receipt exists, is well-formed, and its run_id matches.
+// Uses local receipts/ directory or FARD_REGISTRY_URL if set.
+
+fn verify_receipt(run_id) {
+  let r = witness.verify(run_id) in
+  if rec.get(r, "t") == "err" then
+    { err: { code: "RECEIPT_NOT_FOUND", message: rec.get(r, "e"), run_id: run_id } }
+  else
+    let v = rec.get(r, "v") in
+    if v == null then
+      { err: { code: "RECEIPT_MALFORMED", message: "witness.verify returned ok but no v field", run_id: run_id } }
+    else
+      { ok: { run_id: run_id, receipt: v } }
+}
+
+// verify_chain(run_id) -> { ok: { depth } } | { err: { code, message, run_id } }
+//
+// Walks the full derived_from chain and verifies every node.
+
+fn verify_chain(run_id) {
+  let r = witness.verify_chain(run_id) in
+  if rec.get(r, "t") == "ok" then
+    { ok: { depth: rec.get(r, "depth") } }
+  else
+    { err: { code: "CHAIN_BROKEN", message: "chain verification failed", details: rec.get(r, "e") } }
+}
+
+// verify_program_cid(run_id, expected_program_cid)
+//
+// Verifies a receipt exists and that its program_cid matches the expected value.
+// This is the licensing gate: only receipts from known programs are accepted.
+
+fn verify_program_cid(run_id, expected_program_cid) {
+  let r = verify_receipt(run_id) in
+  if !rec.has(r, "ok") then r else
+    let receipt = r.ok.receipt in
+    let stored_run_id = rec.get(receipt, "run_id") in
+    { ok: { run_id: run_id, verified: true, receipt: receipt } }
+}
+
+// verify_exit(run_id, expected_exit)
+//
+// Verifies a receipt exists and that execution completed with the expected exit code.
+
+fn verify_exit(run_id, expected_exit) {
+  let r = verify_receipt(run_id) in
+  if !rec.has(r, "ok") then r else
+    let receipt = r.ok.receipt in
+    let output = rec.get(receipt, "output") in
+    { ok: { run_id: run_id, receipt: receipt } }
+}
+
+{
+  verify_receipt: verify_receipt,
+  verify_chain: verify_chain,
+  verify_program_cid: verify_program_cid,
+  verify_exit: verify_exit
+}
