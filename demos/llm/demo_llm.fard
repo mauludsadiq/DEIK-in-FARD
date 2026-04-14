@@ -1,0 +1,140 @@
+import("../../packages/kernel-canon/src/types") as types
+import("../../packages/kernel-canon/src/cid") as cid_mod
+import("../../packages/kernel-context/src/context") as ctx
+import("../../packages/kernel-oracle/src/oracle") as oracle
+import("../../packages/kernel-exec/src/engine") as engine
+import("../../packages/kernel-license/src/license") as license
+import("../../packages/kernel-policy/src/policy") as policy
+import("../../packages/kernel-persist/src/persist") as persist
+import("std/str") as str
+import("std/rec") as rec
+
+// ── DEK LLM Demo ──────────────────────────────────────────────────────────
+//
+// Demonstrates the full DEK chain for an LLM interaction:
+//
+//   1. Build a context window (system + user messages)
+//   2. Pin the context by CID
+//   3. Call the model through the oracle layer
+//   4. Execute through the DEK engine
+//   5. Verify the receipt
+//   6. Demonstrate truncation detection
+//   7. Check policy compliance
+//
+// This demo uses a stub evaluator in place of a real LLM.
+// In production, replace stub_llm_eval with a real model call.
+
+// ── Step 1: Build context ─────────────────────────────────────────────────
+
+let sys_msg  = ctx.make_message("system", "You are a helpful assistant. Answer concisely.")
+let user_msg = ctx.make_message("user", "What is the capital of France?")
+
+let conversation = ctx.make_context(
+  [sys_msg.ok, user_msg.ok],
+  "claude-3",
+  2
+)
+
+let original_context_cid = ctx.context_cid(conversation).ok
+
+// ── Step 2: Oracle model call ─────────────────────────────────────────────
+
+let model_response = oracle.oracle_model_call(
+  "claude-3",
+  "What is the capital of France?",
+  "Paris.",
+  0
+)
+
+let oracle_snapshot = oracle.make_snapshot([model_response.ok.event])
+let oracle_snapshot_cid = oracle.snapshot_cid(oracle_snapshot).ok
+
+// ── Step 3: Define evaluator ──────────────────────────────────────────────
+// In production this calls a real LLM API.
+// The evaluator receives the program (prompt), input (context), and config.
+
+fn stub_llm_eval(program, input, config) {
+  // Stub: return the model response as a canonical text value
+  { ok: types.make_text("Paris.") }
+}
+
+// ── Step 4: Execute through DEK engine ───────────────────────────────────
+
+let bundle = {
+  program: { t: "text", v: "What is the capital of France?" },
+  input: ctx.context_to_bundle_input(conversation),
+  trace_mode: "full"
+}
+
+let exec_result = engine.exec_bundle(bundle, stub_llm_eval)
+
+// ── Step 5: Build policy ──────────────────────────────────────────────────
+
+let llm_policy = policy.make_policy(
+  null,
+  ["model_call"],
+  ["ok"],
+  null,
+  null
+)
+
+let policy_check = policy.enforce(
+  llm_policy,
+  exec_result.ok.receipt_cid,
+  exec_result.ok.exit,
+  ["model_call"],
+  0,
+  0
+)
+
+// ── Step 6: Demonstrate truncation detection ──────────────────────────────
+
+let truncated_context = ctx.make_context(
+  [user_msg.ok],  
+  "claude-3",
+  1
+)
+
+let truncation_result = ctx.truncation_check(original_context_cid, truncated_context)
+let intact_result     = ctx.truncation_check(original_context_cid, conversation)
+
+// ── Step 7: Persist context ───────────────────────────────────────────────
+
+let save_result = persist.save_context(conversation, "/tmp/dek_llm_demo_context.json")
+let load_result = persist.load_context("/tmp/dek_llm_demo_context.json")
+let roundtrip_cid_match = load_result.ok.context_cid == original_context_cid
+
+// ── Output ────────────────────────────────────────────────────────────────
+
+{
+  demo: "DEK LLM Demo",
+  step1_context: {
+    context_cid: original_context_cid,
+    message_count: 2,
+    model: "claude-3"
+  },
+  step2_oracle: {
+    event_cid: model_response.ok.cid,
+    snapshot_cid: oracle_snapshot_cid,
+    response: model_response.ok.value
+  },
+  step3_execution: {
+    receipt_cid: exec_result.ok.receipt_cid,
+    exit: exec_result.ok.exit,
+    result: rec.get(exec_result.ok.result, "v")
+  },
+  step4_policy: {
+    compliant: policy_check.ok == true,
+    policy_cid: policy.policy_cid(llm_policy).ok
+  },
+  step5_truncation: {
+    original_context_intact: rec.has(intact_result, "ok"),
+    truncation_detected: rec.has(truncation_result, "err"),
+    truncation_code: truncation_result.err.code
+  },
+  step6_persistence: {
+    saved: rec.has(save_result, "ok"),
+    loaded: rec.has(load_result, "ok"),
+    roundtrip_cid_match: roundtrip_cid_match
+  }
+}
