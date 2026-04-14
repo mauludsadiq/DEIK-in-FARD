@@ -242,7 +242,7 @@ with the receipt.
 ## 11. Conformance
 
 Any implementation in any language is conformant with DEK v1 if and only if
-it produces identical results for all 85 compliance vectors defined in:
+it produces identical results for all compliance vectors defined in:
 
     compliance/vectors/
 

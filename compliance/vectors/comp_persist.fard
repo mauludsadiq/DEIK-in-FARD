@@ -1,0 +1,81 @@
+import("../../packages/kernel-persist/src/persist") as persist
+import("../../packages/kernel-license/src/license") as license
+import("../../packages/kernel-context/src/context") as ctx
+import("std/rec") as rec
+import("std/str") as str
+
+// DEK v1 Compliance: Persistence
+// These vectors verify save/load roundtrips with CID stability.
+
+let prog_a = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+let registry = license.make_registry([prog_a])
+let reg_path = "/tmp/dek_comp_registry.json"
+let ctx_path = "/tmp/dek_comp_context.json"
+
+let msg = ctx.make_message("user", "compliance test")
+let sample_ctx = ctx.make_context([msg.ok], "test-model", 1)
+
+test "COMP-PERSIST-001: save_registry returns ok" {
+  rec.has(persist.save_registry(registry, reg_path), "ok")
+}
+
+test "COMP-PERSIST-002: save_registry ok has path" {
+  persist.save_registry(registry, reg_path).ok.path == reg_path
+}
+
+test "COMP-PERSIST-003: save_registry ok has registry_cid" {
+  str.starts_with(persist.save_registry(registry, reg_path).ok.registry_cid, "sha256:")
+}
+
+test "COMP-PERSIST-004: load_registry returns ok after save" {
+  let s = persist.save_registry(registry, reg_path) in
+  rec.has(persist.load_registry(reg_path), "ok")
+}
+
+test "COMP-PERSIST-005: load_registry cid matches save cid" {
+  let s = persist.save_registry(registry, reg_path) in
+  let l = persist.load_registry(reg_path) in
+  l.ok.registry_cid == s.ok.registry_cid
+}
+
+test "COMP-PERSIST-006: roundtrip preserves is_licensed" {
+  let s = persist.save_registry(registry, reg_path) in
+  let l = persist.load_registry(reg_path) in
+  license.is_licensed(prog_a, l.ok.registry)
+}
+
+test "COMP-PERSIST-007: load_registry err for missing file" {
+  let r = persist.load_registry("/tmp/dek_no_such_file_xyz.json") in
+  rec.has(r, "err") && r.err.code == "READ_FAILED"
+}
+
+test "COMP-PERSIST-008: save_context returns ok" {
+  rec.has(persist.save_context(sample_ctx, ctx_path), "ok")
+}
+
+test "COMP-PERSIST-009: save_context ok has context_cid" {
+  str.starts_with(persist.save_context(sample_ctx, ctx_path).ok.context_cid, "sha256:")
+}
+
+test "COMP-PERSIST-010: load_context returns ok after save" {
+  let s = persist.save_context(sample_ctx, ctx_path) in
+  rec.has(persist.load_context(ctx_path), "ok")
+}
+
+test "COMP-PERSIST-011: load_context cid matches save cid" {
+  let s = persist.save_context(sample_ctx, ctx_path) in
+  let l = persist.load_context(ctx_path) in
+  l.ok.context_cid == s.ok.context_cid
+}
+
+test "COMP-PERSIST-012: roundtrip cid stable for truncation check" {
+  let s = persist.save_context(sample_ctx, ctx_path) in
+  let l = persist.load_context(ctx_path) in
+  let r = ctx.truncation_check(s.ok.context_cid, l.ok.context) in
+  rec.has(r, "ok") && r.ok.verified == true
+}
+
+test "COMP-PERSIST-013: load_context err for missing file" {
+  let r = persist.load_context("/tmp/dek_no_such_file_xyz.json") in
+  rec.has(r, "err") && r.err.code == "READ_FAILED"
+}

@@ -1,0 +1,99 @@
+import("../../packages/kernel-oracle/src/oracle") as oracle
+import("std/rec") as rec
+import("std/str") as str
+
+// DEK v1 Compliance: Oracle Boundary
+// These vectors verify that oracle events are correctly formed,
+// sequenced, and content-addressed.
+
+test "COMP-ORACLE-001: oracle_now returns ok" {
+  rec.has(oracle.oracle_now(0), "ok")
+}
+
+test "COMP-ORACLE-002: oracle_now value is positive int" {
+  oracle.oracle_now(0).ok.value > 0
+}
+
+test "COMP-ORACLE-003: oracle_now event type is oracle_event" {
+  oracle.oracle_now(0).ok.event.t == "oracle_event"
+}
+
+test "COMP-ORACLE-004: oracle_now event cid starts with sha256:" {
+  str.starts_with(oracle.oracle_now(0).ok.cid, "sha256:")
+}
+
+test "COMP-ORACLE-005: different seq produces different cid" {
+  let a = oracle.oracle_now(0) in
+  let b = oracle.oracle_now(1) in
+  a.ok.cid != b.ok.cid
+}
+
+test "COMP-ORACLE-006: oracle_random_int returns ok" {
+  rec.has(oracle.oracle_random_int(0, 100, 0), "ok")
+}
+
+test "COMP-ORACLE-007: oracle_random_int value in range" {
+  let r = oracle.oracle_random_int(0, 100, 0) in
+  r.ok.value >= 0 && r.ok.value <= 100
+}
+
+test "COMP-ORACLE-008: oracle_random_int event cid starts with sha256:" {
+  str.starts_with(oracle.oracle_random_int(0, 100, 0).ok.cid, "sha256:")
+}
+
+test "COMP-ORACLE-009: oracle_random_uuid returns ok" {
+  rec.has(oracle.oracle_random_uuid(0), "ok")
+}
+
+test "COMP-ORACLE-010: oracle_random_uuid event cid starts with sha256:" {
+  str.starts_with(oracle.oracle_random_uuid(0).ok.cid, "sha256:")
+}
+
+test "COMP-ORACLE-011: oracle_sensor returns ok" {
+  let data = { t: "null" } in
+  rec.has(oracle.oracle_sensor("gps", data, 0), "ok")
+}
+
+test "COMP-ORACLE-012: oracle_sensor event is oracle_event type" {
+  let data = { t: "null" } in
+  oracle.oracle_sensor("gps", data, 0).ok.event.t == "oracle_event"
+}
+
+test "COMP-ORACLE-013: oracle_sensor event cid starts with sha256:" {
+  let data = { t: "null" } in
+  str.starts_with(oracle.oracle_sensor("gps", data, 0).ok.cid, "sha256:")
+}
+
+test "COMP-ORACLE-014: oracle_model_call returns ok" {
+  rec.has(oracle.oracle_model_call("m", "q", "a", 0), "ok")
+}
+
+test "COMP-ORACLE-015: oracle_model_call value matches response" {
+  oracle.oracle_model_call("m", "q", "answer", 0).ok.value == "answer"
+}
+
+test "COMP-ORACLE-016: oracle_model_call event cid starts with sha256:" {
+  str.starts_with(oracle.oracle_model_call("m", "q", "a", 0).ok.cid, "sha256:")
+}
+
+test "COMP-ORACLE-017: different responses produce different cids" {
+  let a = oracle.oracle_model_call("m", "q", "answer_a", 0) in
+  let b = oracle.oracle_model_call("m", "q", "answer_b", 0) in
+  a.ok.cid != b.ok.cid
+}
+
+test "COMP-ORACLE-018: make_snapshot returns canonical list" {
+  let e = oracle.oracle_now(0) in
+  oracle.make_snapshot([e.ok.event]).t == "list"
+}
+
+test "COMP-ORACLE-019: snapshot_cid starts with sha256:" {
+  let e = oracle.oracle_now(0) in
+  let snap = oracle.make_snapshot([e.ok.event]) in
+  str.starts_with(oracle.snapshot_cid(snap).ok, "sha256:")
+}
+
+test "COMP-ORACLE-020: make_event returns oracle_event type" {
+  let e = oracle.make_event("ffi", { t: "null" }, { t: "int", v: 1 }, 0) in
+  e.t == "oracle_event"
+}
