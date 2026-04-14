@@ -1,0 +1,82 @@
+import("../../packages/kernel-replay/src/replay") as replay
+import("../../packages/kernel-canon/src/types") as types
+import("std/rec") as rec
+import("std/str") as str
+
+let known_run_id = "sha256:9009f58955db43ac3ba6bb3e2e27d8d70c1c20bad557bd39e084563148098f1e"
+let unknown_run_id = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+let program = { t: "text", v: "identity" }
+let input = { t: "null" }
+
+fn identity_eval(program, input, config) { { ok: input } }
+fn int_eval(program, input, config) { { ok: types.make_int(42) } }
+fn failing_eval(program, input, config) { { err: { code: "FAIL" } } }
+
+test "replay_check returns ok for deterministic evaluator" {
+  let r = replay.replay_check(program, input, identity_eval) in
+  rec.has(r, "ok")
+}
+
+test "replay_check ok has receipt_cid" {
+  let r = replay.replay_check(program, input, identity_eval) in
+  str.starts_with(r.ok.receipt_cid, "sha256:")
+}
+
+test "replay_check ok confirms deterministic true" {
+  let r = replay.replay_check(program, input, identity_eval) in
+  r.ok.deterministic == true
+}
+
+test "replay_check ok has runs count 2" {
+  let r = replay.replay_check(program, input, identity_eval) in
+  r.ok.runs == 2
+}
+
+test "replay_check same receipt_cid on repeated calls" {
+  let a = replay.replay_check(program, input, identity_eval) in
+  let b = replay.replay_check(program, input, identity_eval) in
+  a.ok.receipt_cid == b.ok.receipt_cid
+}
+
+test "replay_check different input different receipt_cid" {
+  let a = replay.replay_check(program, { t: "null" }, identity_eval) in
+  let b = replay.replay_check(program, { t: "bool", v: true }, identity_eval) in
+  a.ok.receipt_cid != b.ok.receipt_cid
+}
+
+test "replay_check works with int evaluator" {
+  let r = replay.replay_check(program, input, int_eval) in
+  rec.has(r, "ok") && r.ok.deterministic == true
+}
+
+test "replay_check failing evaluator still deterministic" {
+  let r = replay.replay_check(program, input, failing_eval) in
+  rec.has(r, "ok") && r.ok.deterministic == true
+}
+
+test "replay returns ok for known run_id" {
+  let r = replay.replay(known_run_id, program, input, identity_eval) in
+  rec.has(r, "ok")
+}
+
+test "replay ok has replayed_receipt_cid" {
+  let r = replay.replay(known_run_id, program, input, identity_eval) in
+  str.starts_with(r.ok.replayed_receipt_cid, "sha256:")
+}
+
+test "replay ok has deterministic true" {
+  let r = replay.replay(known_run_id, program, input, identity_eval) in
+  r.ok.deterministic == true
+}
+
+test "replay err for unknown run_id" {
+  let r = replay.replay(unknown_run_id, program, input, identity_eval) in
+  rec.has(r, "err") && r.err.code == "RECEIPT_NOT_FOUND"
+}
+
+test "replay_check receipt_cid is stable across sessions" {
+  let r1 = replay.replay_check(program, input, int_eval) in
+  let r2 = replay.replay_check(program, input, int_eval) in
+  r1.ok.receipt_cid == r2.ok.receipt_cid
+}
