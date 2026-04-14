@@ -1,0 +1,90 @@
+import("../../kernel-canon/src/types") as types
+import("../../kernel-canon/src/cid") as cid_mod
+import("std/io") as io
+import("std/json") as json
+import("std/rec") as rec
+
+// save_registry(registry, path)
+//
+// Writes a canonical registry value to disk as JSON.
+// Returns { ok: { path, registry_cid } } | { err: { code, message } }
+
+fn save_registry(registry, path) {
+  let rcid = cid_mod.cid_of(registry) in
+  if !rec.has(rcid, "ok") then
+    { err: { code: "CID_FAILED", message: "failed to compute registry CID before save" } }
+  else
+    let encoded = json.encode(registry) in
+    let result = io.write_file(path, encoded) in
+    if rec.has(result, "err") then
+      { err: { code: "WRITE_FAILED", message: result.err, path: path } }
+    else
+      { ok: { path: path, registry_cid: rcid.ok } }
+}
+
+// load_registry(path)
+//
+// Loads a canonical registry value from disk.
+// Returns { ok: { registry, registry_cid } } | { err: { code, message } }
+
+fn load_registry(path) {
+  let result = io.read_file(path) in
+  if !rec.has(result, "ok") then
+    { err: { code: "READ_FAILED", message: "could not read registry file", path: path } }
+  else
+    let registry = json.decode(result.ok) in
+    if registry == null then
+      { err: { code: "DECODE_FAILED", message: "could not decode registry JSON", path: path } }
+    else
+      let rcid = cid_mod.cid_of(registry) in
+      if !rec.has(rcid, "ok") then
+        { err: { code: "CID_FAILED", message: "failed to compute registry CID after load" } }
+      else
+        { ok: { registry: registry, registry_cid: rcid.ok } }
+}
+
+// save_context(context, path)
+//
+// Writes a canonical context value to disk.
+// Returns { ok: { path, context_cid } } | { err: { code, message } }
+
+fn save_context(context, path) {
+  let ccid = cid_mod.cid_of(context) in
+  if !rec.has(ccid, "ok") then
+    { err: { code: "CID_FAILED", message: "failed to compute context CID before save" } }
+  else
+    let encoded = json.encode(context) in
+    let result = io.write_file(path, encoded) in
+    if rec.has(result, "err") then
+      { err: { code: "WRITE_FAILED", message: result.err, path: path } }
+    else
+      { ok: { path: path, context_cid: ccid.ok } }
+}
+
+// load_context(path)
+//
+// Loads a canonical context value from disk.
+// Returns { ok: { context, context_cid } } | { err: { code, message } }
+
+fn load_context(path) {
+  let result = io.read_file(path) in
+  if !rec.has(result, "ok") then
+    { err: { code: "READ_FAILED", message: "could not read context file", path: path } }
+  else
+    let context = json.decode(result.ok) in
+    if context == null then
+      { err: { code: "DECODE_FAILED", message: "could not decode context JSON", path: path } }
+    else
+      let ccid = cid_mod.cid_of(context) in
+      if !rec.has(ccid, "ok") then
+        { err: { code: "CID_FAILED", message: "failed to compute context CID after load" } }
+      else
+        { ok: { context: context, context_cid: ccid.ok } }
+}
+
+{
+  save_registry: save_registry,
+  load_registry: load_registry,
+  save_context: save_context,
+  load_context: load_context
+}
