@@ -13,6 +13,7 @@ DEK produces a deterministic, content-addressable byte representation of typed v
     fardrun test --program tests/kernel/test_cid.fard
     fardrun test --program tests/bundle/test_validate.fard
     fardrun test --program tests/witness/test_receipt.fard
+    fardrun test --program tests/exec/test_engine.fard
 
 ## Phase ladder
 
@@ -20,7 +21,29 @@ DEK produces a deterministic, content-addressable byte representation of typed v
     Phase 2 - Addressing        done  cid.fard
     Phase 3 - Bundle admission  done  validate.fard
     Phase 4 - Receipt formation done  receipt.fard
-    Phase 5 - Execution               engine.fard (next)
+    Phase 5 - Execution         done  engine.fard
+
+All five phases complete.
+
+## Execution pipeline
+
+The engine wires all five phases together:
+
+    exec_bundle(bundle, evaluator) -> { ok: { receipt, receipt_cid, exit, result } }
+                                   | { err: { code, message, phase, details } }
+
+Phases inside exec_bundle:
+
+    1. validate_bundle(bundle)         -- reject malformed bundles early
+    2. cid_of(program), cid_of(input)  -- content-address all inputs
+    3. evaluator(program, input, config) -- caller-supplied execution
+    4. cid_of(result)                  -- content-address the output
+    5. make_receipt(...)               -- form cryptographic witness
+    6. receipt_cid(receipt)            -- content-address the receipt itself
+
+The evaluator is injected by the caller, keeping the engine pure and testable.
+Any function with signature fn(program, input, config) -> { ok: result } | { err: ... }
+can serve as an evaluator.
 
 ## Content addressing
 
@@ -152,6 +175,8 @@ Wrapped types use raw records:
         validate.fard     -- bundle admission gatekeeper
       kernel-witness/src/
         receipt.fard      -- execution witness with CID chaining
+      kernel-exec/src/
+        engine.fard       -- full exec pipeline: validate+cid+eval+receipt
     tests/
       kernel/
         test_encode_smoke.fard    -- basic run check (2 tests)
@@ -162,11 +187,13 @@ Wrapped types use raw records:
         test_validate.fard        -- bundle validation (11 tests)
       witness/
         test_receipt.fard         -- receipt formation (13 tests)
+      exec/
+        test_engine.fard          -- execution pipeline (11 tests)
     main.fard             -- demo: encodes {answer: 42, label: "DEK"} -> 59 bytes
 
 ## Test summary
 
-    51 tests, 0 failures
+    62 tests, 0 failures
 
 ## Properties
 
@@ -174,3 +201,4 @@ Wrapped types use raw records:
 - Self-describing: tag byte first, no schema required to parse length
 - Content-addressable: sha256(encode(v)) is a stable CID for any value
 - FARD-native: no external dependencies, runs under fardrun
+- Evaluator-agnostic: engine accepts any fn(program, input, config) as evaluator
