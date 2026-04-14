@@ -1,0 +1,18 @@
+import("./packages/kernel-canon/src/encode") as encode
+import("./packages/kernel-canon/src/types") as types
+import("std/bytes") as bytes
+
+let demo = {
+  t: "record",
+  v: [
+    { k: "answer", v: types.make_int(42) },
+    { k: "label", v: types.make_text("DEK") }
+  ]
+}
+
+let encoded = encode.encode(demo)
+
+{
+  ok: true,
+  byte_len: bytes.len(encoded.ok)
+}

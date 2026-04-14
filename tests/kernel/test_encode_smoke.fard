@@ -1,0 +1,13 @@
+import("../../packages/kernel-canon/src/encode") as encode
+import("../../packages/kernel-canon/src/types") as types
+import("std/bytes") as bytes
+
+test "encode int smoke" {
+  let out = encode.encode(types.make_int(42))
+  bytes.len(out.ok) > 0
+}
+
+test "encode text smoke" {
+  let out = encode.encode(types.make_text("abc"))
+  bytes.len(out.ok) > 0
+}

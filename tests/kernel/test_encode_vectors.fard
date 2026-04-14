@@ -1,0 +1,59 @@
+import("../../packages/kernel-canon/src/encode") as encode
+import("../../packages/kernel-canon/src/types") as types
+import("std/bytes") as bytes
+
+// Known expected encodings (tag byte + payload)
+// null  = 0x00
+// false = 0x01
+// true  = 0x02
+// int 0 = 0x03 0000000000000000
+// int 1 = 0x03 0000000000000001
+// int -1= 0x03 ffffffffffffffff
+// text ""= 0x05 0000000000000000  (tag + 8-byte len=0)
+// list []= 0x07 0000000000000000  (tag + 8-byte count=0)
+
+test "null encodes to 1 byte tag 0" {
+  let out = encode.encode(types.make_null()) in
+  bytes.to_hex(out.ok) == "00"
+}
+
+test "false encodes to tag 1" {
+  bytes.to_hex(encode.encode(types.make_bool(false)).ok) == "01"
+}
+
+test "true encodes to tag 2" {
+  bytes.to_hex(encode.encode(types.make_bool(true)).ok) == "02"
+}
+
+test "int 0 is tag 3 + 8 zero bytes" {
+  bytes.to_hex(encode.encode(types.make_int(0)).ok) == "030000000000000000"
+}
+
+test "int 1" {
+  bytes.to_hex(encode.encode(types.make_int(1)).ok) == "030000000000000001"
+}
+
+test "int -1 is two's complement" {
+  bytes.to_hex(encode.encode(types.make_int(-1)).ok) == "03ffffffffffffffff"
+}
+
+test "empty text is tag 5 + 8-byte len 0" {
+  bytes.to_hex(encode.encode(types.make_text("")).ok) == "050000000000000000"
+}
+
+test "empty list is tag 7 + 8-byte count 0" {
+  bytes.to_hex(encode.encode(types.make_list([])).ok) == "070000000000000000"
+}
+
+test "text abc length prefix correct" {
+  let out = encode.encode(types.make_text("abc")) in
+  bytes.to_hex(out.ok) == "050000000000000003616263"
+}
+
+test "int 255" {
+  bytes.to_hex(encode.encode(types.make_int(255)).ok) == "0300000000000000ff"
+}
+
+test "int 256" {
+  bytes.to_hex(encode.encode(types.make_int(256)).ok) == "030000000000000100"
+}

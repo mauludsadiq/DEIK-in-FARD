@@ -1,0 +1,363 @@
+import("std/list") as list
+import("std/bytes") as bytes
+import("std/str") as str
+import("std/rec") as rec
+import("std/type") as type
+import("std/int") as int
+import("std/bigint") as bigint
+import("std/codec") as codec
+
+let TAG_NULL = 0
+let TAG_BOOL_FALSE = 1
+let TAG_BOOL_TRUE = 2
+let TAG_INT64 = 3
+let TAG_FLOAT64 = 4
+let TAG_TEXT = 5
+let TAG_BYTES = 6
+let TAG_LIST = 7
+let TAG_RECORD = 8
+let TAG_ERROR = 9
+let TAG_OPTION_NONE = 10
+let TAG_OPTION_SOME = 11
+let TAG_RESULT_OK = 12
+let TAG_RESULT_ERR = 13
+let TAG_CID_REF = 14
+let TAG_TRACE_FRAME = 15
+let TAG_ORACLE_EVENT = 16
+let TAG_BUNDLE = 17
+let TAG_DIGEST = 18
+let TAG_PROGRAM_REF = 19
+let TAG_DEP_LIST = 20
+let TAG_SENSOR_SNAPSHOT = 21
+let TAG_TIMESTAMP = 22
+let TAG_BIGINT = 23
+let TAG_MAP = 24
+let TAG_SET = 25
+let TAG_RECEIPT = 26
+
+let U64_MOD = bigint.from_str("18446744073709551616")
+let U8_BASE = bigint.from_int(256)
+
+fn ok(v) {
+  { ok: v }
+}
+
+fn err(code, message, details = null) {
+  {
+    err: {
+      code: code,
+      message: message,
+      details: details
+    }
+  }
+}
+
+fn is_ok(r) {
+  rec.has(r, "ok")
+}
+
+fn unwrap_ok(r) {
+  r.ok
+}
+
+fn byte(n) {
+  bytes.of_list([n])
+}
+
+fn concat2(a, b) {
+  bytes.concat(a, b)
+}
+
+fn concat_many(parts) {
+  list.fold(parts, bytes.of_list([]), fn(acc, part) {
+    bytes.concat(acc, part)
+  })
+}
+
+fn parse_small_int_text(s) {
+  let p = int.parse(s) in
+  if p.t == "ok" then ok(p.v) else err("IntParseFailed", str.concat("could not parse integer text: ", s))
+}
+
+fn bigint_to_small_int(b) {
+  parse_small_int_text(bigint.to_str(b))
+}
+
+fn bigint_byte_list_be(n_big, remaining) {
+  if remaining == 0 then [] else
+    let q = bigint.div(n_big, U8_BASE) in
+    let r = bigint.mod(n_big, U8_BASE) in
+    let rr = bigint_to_small_int(r) in
+    if is_ok(rr) then
+      let rest = bigint_byte_list_be(q, remaining - 1) in
+      list.append(rest, unwrap_ok(rr))
+    else
+      []
+}
+
+fn u64_be(n) {
+  if n < 0 then err("NegativeLength", "u64 cannot encode negative integers", { n: n }) else
+    ok(bytes.of_list([
+      int.mod(int.div(n, int.pow(256, 7)), 256),
+      int.mod(int.div(n, int.pow(256, 6)), 256),
+      int.mod(int.div(n, int.pow(256, 5)), 256),
+      int.mod(int.div(n, int.pow(256, 4)), 256),
+      int.mod(int.div(n, int.pow(256, 3)), 256),
+      int.mod(int.div(n, int.pow(256, 2)), 256),
+      int.mod(int.div(n, int.pow(256, 1)), 256),
+      int.mod(n, 256)
+    ]))
+}
+
+fn int64_be(n) {
+  if n >= 0 then
+    u64_be(n)
+  else
+    let ub = bigint.add(U64_MOD, bigint.from_int(n)) in
+    ok(bytes.of_list(bigint_byte_list_be(ub, 8)))
+}
+
+fn len_prefixed(payload) {
+  let lb = u64_be(bytes.len(payload)) in
+  if is_ok(lb) then ok(concat2(unwrap_ok(lb), payload)) else lb
+}
+
+fn encode_text_payload(s) {
+  let payload = bytes.of_str(s) in
+  let lp = len_prefixed(payload) in
+  if is_ok(lp) then ok(concat2(byte(TAG_TEXT), unwrap_ok(lp))) else lp
+}
+
+fn encode_bytes_payload(bs) {
+  let lp = len_prefixed(bs) in
+  if is_ok(lp) then ok(concat2(byte(TAG_BYTES), unwrap_ok(lp))) else lp
+}
+
+fn encode_cid_payload(cid_text) {
+  let payload = bytes.of_str(cid_text) in
+  let lp = len_prefixed(payload) in
+  if is_ok(lp) then ok(concat2(byte(TAG_CID_REF), unwrap_ok(lp))) else lp
+}
+
+fn encode_float_bits_hex(bits_hex) {
+  let decoded = codec.hex_decode(bits_hex) in
+  if bytes.len(decoded) != 8 then
+    err("InvalidFloatBits", "float bits_hex must decode to exactly 8 bytes", { bits_hex: bits_hex })
+  else
+    ok(concat2(byte(TAG_FLOAT64), decoded))
+}
+
+fn encode_list_items(items) {
+  let count_b = u64_be(list.len(items)) in
+  if !is_ok(count_b) then count_b else
+    let folded = list.fold(items, { ok: bytes.of_list([]) }, fn(acc, item) {
+      if !is_ok(acc) then acc else
+        let enc = encode(item) in
+        if !is_ok(enc) then enc else ok(concat2(unwrap_ok(acc), unwrap_ok(enc)))
+    }) in
+    if !is_ok(folded) then folded else
+      ok(concat_many([
+        byte(TAG_LIST),
+        unwrap_ok(count_b),
+        unwrap_ok(folded)
+      ]))
+}
+
+fn encode_record_entry(entry) {
+  let key = rec.get(entry, "k") in
+  let value = rec.get(entry, "v") in
+  if key == null then
+    err("InvalidRecordEntry", "record entry missing key field 'k'", entry)
+  else if value == null then
+    err("InvalidRecordEntry", "record entry missing value field 'v'", entry)
+  else
+    let key_enc = encode_text_payload(key) in
+    if !is_ok(key_enc) then key_enc else
+      let value_enc = encode(value) in
+      if !is_ok(value_enc) then value_enc else
+        ok(concat2(unwrap_ok(key_enc), unwrap_ok(value_enc)))
+}
+
+fn encode_record_entries(entries) {
+  let count_b = u64_be(list.len(entries)) in
+  if !is_ok(count_b) then count_b else
+    let folded = list.fold(entries, { ok: bytes.of_list([]) }, fn(acc, entry) {
+      if !is_ok(acc) then acc else
+        let enc = encode_record_entry(entry) in
+        if !is_ok(enc) then enc else ok(concat2(unwrap_ok(acc), unwrap_ok(enc)))
+    }) in
+    if !is_ok(folded) then folded else
+      ok(concat_many([
+        byte(TAG_RECORD),
+        unwrap_ok(count_b),
+        unwrap_ok(folded)
+      ]))
+}
+
+fn encode_map_entry(entry) {
+  let key = rec.get(entry, "k") in
+  let value = rec.get(entry, "v") in
+  if key == null then
+    err("InvalidMapEntry", "map entry missing key field 'k'", entry)
+  else if value == null then
+    err("InvalidMapEntry", "map entry missing value field 'v'", entry)
+  else
+    let key_enc = encode(key) in
+    if !is_ok(key_enc) then key_enc else
+      let value_enc = encode(value) in
+      if !is_ok(value_enc) then value_enc else
+        ok(concat2(unwrap_ok(key_enc), unwrap_ok(value_enc)))
+}
+
+fn encode_map_entries(entries) {
+  let count_b = u64_be(list.len(entries)) in
+  if !is_ok(count_b) then count_b else
+    let folded = list.fold(entries, { ok: bytes.of_list([]) }, fn(acc, entry) {
+      if !is_ok(acc) then acc else
+        let enc = encode_map_entry(entry) in
+        if !is_ok(enc) then enc else ok(concat2(unwrap_ok(acc), unwrap_ok(enc)))
+    }) in
+    if !is_ok(folded) then folded else
+      ok(concat_many([
+        byte(TAG_MAP),
+        unwrap_ok(count_b),
+        unwrap_ok(folded)
+      ]))
+}
+
+fn encode_set_items(items) {
+  let count_b = u64_be(list.len(items)) in
+  if !is_ok(count_b) then count_b else
+    let folded = list.fold(items, { ok: bytes.of_list([]) }, fn(acc, item) {
+      if !is_ok(acc) then acc else
+        let enc = encode(item) in
+        if !is_ok(enc) then enc else ok(concat2(unwrap_ok(acc), unwrap_ok(enc)))
+    }) in
+    if !is_ok(folded) then folded else
+      ok(concat_many([
+        byte(TAG_SET),
+        unwrap_ok(count_b),
+        unwrap_ok(folded)
+      ]))
+}
+
+fn encode_bigint(sign, mag_hex) {
+  let sign_byte = match sign {
+    "zero" => ok(byte(0)),
+    "positive" => ok(byte(1)),
+    "negative" => ok(byte(2)),
+    _ => err("InvalidBigIntSign", "bigint sign must be zero, positive, or negative", { sign: sign })
+  } in
+  if !is_ok(sign_byte) then sign_byte else
+    let mag_bytes = codec.hex_decode(mag_hex) in
+    let lp = len_prefixed(mag_bytes) in
+    if !is_ok(lp) then lp else
+      ok(concat_many([
+        byte(TAG_BIGINT),
+        unwrap_ok(sign_byte),
+        unwrap_ok(lp)
+      ]))
+}
+
+fn encode_error_value(canon_val) {
+  let code_v = rec.get(canon_val, "code") in
+  let message_v = rec.get(canon_val, "message") in
+  let data_v = rec.get(canon_val, "data") in
+  let phase_v = rec.get(canon_val, "phase") in
+  let body = {
+    t: "record",
+    v: [
+      { k: "code", v: { t: "text", v: code_v ?? "" } },
+      { k: "data", v: data_v ?? { t: "null" } },
+      { k: "message", v: { t: "text", v: message_v ?? "" } },
+      { k: "phase", v: { t: "text", v: phase_v ?? "" } }
+    ]
+  } in
+  let inner = encode(body) in
+  if is_ok(inner) then ok(concat2(byte(TAG_ERROR), unwrap_ok(inner))) else inner
+}
+
+fn encode_wrapped(tag, inner_canon) {
+  let inner = encode(inner_canon) in
+  if is_ok(inner) then ok(concat2(byte(tag), unwrap_ok(inner))) else inner
+}
+
+fn encode_record_like(tag, canon_val) {
+  let body = rec.get(canon_val, "v") in
+  if body == null then
+    err("MissingValue", "record-like canonical value is missing 'v'", canon_val)
+  else
+    let inner = encode(body) in
+    if is_ok(inner) then ok(concat2(byte(tag), unwrap_ok(inner))) else inner
+}
+
+fn encode(canon_val) {
+  if type.of(canon_val) != "record" then
+    err("InvalidCanonicalValue", "encode expects a canonical value record", { got: type.of(canon_val) })
+  else
+    let tag = rec.get(canon_val, "t") in
+    match tag {
+      "null" => ok(byte(TAG_NULL)),
+      "bool" => if rec.get(canon_val, "v") then ok(byte(TAG_BOOL_TRUE)) else ok(byte(TAG_BOOL_FALSE)),
+      "int" =>
+        let ib = int64_be(rec.get(canon_val, "v")) in
+        if is_ok(ib) then ok(concat2(byte(TAG_INT64), unwrap_ok(ib))) else ib,
+      "float" => encode_float_bits_hex(rec.get(canon_val, "bits_hex")),
+      "text" => encode_text_payload(rec.get(canon_val, "v")),
+      "bytes" => encode_bytes_payload(rec.get(canon_val, "v")),
+      "list" => encode_list_items(rec.get(canon_val, "v")),
+      "record" => encode_record_entries(rec.get(canon_val, "v")),
+      "error" => encode_error_value(canon_val),
+      "option_none" => ok(byte(TAG_OPTION_NONE)),
+      "option_some" => encode_wrapped(TAG_OPTION_SOME, rec.get(canon_val, "v")),
+      "result_ok" => encode_wrapped(TAG_RESULT_OK, rec.get(canon_val, "v")),
+      "result_err" => encode_wrapped(TAG_RESULT_ERR, rec.get(canon_val, "v")),
+      "cid" => encode_cid_payload(rec.get(canon_val, "v")),
+      "trace_frame" => encode_record_like(TAG_TRACE_FRAME, canon_val),
+      "oracle_event" => encode_record_like(TAG_ORACLE_EVENT, canon_val),
+      "bundle" => encode_record_like(TAG_BUNDLE, canon_val),
+      "digest" => encode_record_like(TAG_DIGEST, canon_val),
+      "program_ref" => encode_record_like(TAG_PROGRAM_REF, canon_val),
+      "dep_list" => encode_record_like(TAG_DEP_LIST, canon_val),
+      "sensor_snapshot" => encode_record_like(TAG_SENSOR_SNAPSHOT, canon_val),
+      "timestamp" => encode_record_like(TAG_TIMESTAMP, canon_val),
+      "bigint" => encode_bigint(rec.get(canon_val, "sign"), rec.get(canon_val, "mag_hex")),
+      "map" => encode_map_entries(rec.get(canon_val, "v")),
+      "set" => encode_set_items(rec.get(canon_val, "v")),
+      "receipt" => encode_record_like(TAG_RECEIPT, canon_val),
+      _ => err("UnknownCanonicalTag", str.concat("unknown canonical tag: ", str.from(tag)), canon_val)
+    }
+}
+
+{
+  TAG_NULL: TAG_NULL,
+  TAG_BOOL_FALSE: TAG_BOOL_FALSE,
+  TAG_BOOL_TRUE: TAG_BOOL_TRUE,
+  TAG_INT64: TAG_INT64,
+  TAG_FLOAT64: TAG_FLOAT64,
+  TAG_TEXT: TAG_TEXT,
+  TAG_BYTES: TAG_BYTES,
+  TAG_LIST: TAG_LIST,
+  TAG_RECORD: TAG_RECORD,
+  TAG_ERROR: TAG_ERROR,
+  TAG_OPTION_NONE: TAG_OPTION_NONE,
+  TAG_OPTION_SOME: TAG_OPTION_SOME,
+  TAG_RESULT_OK: TAG_RESULT_OK,
+  TAG_RESULT_ERR: TAG_RESULT_ERR,
+  TAG_CID_REF: TAG_CID_REF,
+  TAG_TRACE_FRAME: TAG_TRACE_FRAME,
+  TAG_ORACLE_EVENT: TAG_ORACLE_EVENT,
+  TAG_BUNDLE: TAG_BUNDLE,
+  TAG_DIGEST: TAG_DIGEST,
+  TAG_PROGRAM_REF: TAG_PROGRAM_REF,
+  TAG_DEP_LIST: TAG_DEP_LIST,
+  TAG_SENSOR_SNAPSHOT: TAG_SENSOR_SNAPSHOT,
+  TAG_TIMESTAMP: TAG_TIMESTAMP,
+  TAG_BIGINT: TAG_BIGINT,
+  TAG_MAP: TAG_MAP,
+  TAG_SET: TAG_SET,
+  TAG_RECEIPT: TAG_RECEIPT,
+  u64_be: u64_be,
+  int64_be: int64_be,
+  encode: encode
+}

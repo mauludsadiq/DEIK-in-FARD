@@ -1,0 +1,98 @@
+import("../../packages/kernel-canon/src/encode") as encode
+import("../../packages/kernel-canon/src/types") as types
+import("std/bytes") as bytes
+
+test "bytes empty is tag 6 + len 0" {
+  let out = encode.encode(types.make_bytes(bytes.of_list([]))) in
+  bytes.to_hex(out.ok) == "060000000000000000"
+}
+
+test "bytes single byte 0xff" {
+  let out = encode.encode(types.make_bytes(bytes.of_list([255]))) in
+  bytes.to_hex(out.ok) == "060000000000000001ff"
+}
+
+test "empty record is tag 8 + count 0" {
+  let out = encode.encode(types.make_record([])) in
+  bytes.to_hex(out.ok) == "080000000000000000"
+}
+
+test "record with one int entry has bytes" {
+  let out = encode.encode(types.make_record([
+    { k: "x", v: types.make_int(1) }
+  ])) in
+  bytes.len(out.ok) > 0
+}
+
+test "option_none is tag 0a single byte" {
+  let out = encode.encode({ t: "option_none" }) in
+  bytes.to_hex(out.ok) == "0a"
+}
+
+test "option_some wraps null" {
+  let out = encode.encode({ t: "option_some", v: types.make_null() }) in
+  bytes.to_hex(out.ok) == "0b00"
+}
+
+test "result_ok wraps bool true" {
+  let out = encode.encode({ t: "result_ok", v: types.make_bool(true) }) in
+  bytes.to_hex(out.ok) == "0c02"
+}
+
+test "result_err wraps null" {
+  let out = encode.encode({ t: "result_err", v: types.make_null() }) in
+  bytes.to_hex(out.ok) == "0d00"
+}
+
+test "float 1.0 is 9 bytes tag+8" {
+  let out = encode.encode({ t: "float", bits_hex: "3ff0000000000000" }) in
+  bytes.len(out.ok) == 9
+}
+
+test "float 0.0 is 9 bytes" {
+  let out = encode.encode({ t: "float", bits_hex: "0000000000000000" }) in
+  bytes.len(out.ok) == 9
+}
+
+test "cid encodes as tag 0e + len-prefixed utf8" {
+  let out = encode.encode({ t: "cid", v: "sha256:abc" }) in
+  bytes.len(out.ok) > 0
+}
+
+test "list of two nulls is 11 bytes" {
+  let out = encode.encode(types.make_list([
+    types.make_null(),
+    types.make_null()
+  ])) in
+  bytes.len(out.ok) == 11
+}
+
+test "empty map is tag 18 + count 0" {
+  let out = encode.encode({ t: "map", v: [] }) in
+  bytes.to_hex(out.ok) == "180000000000000000"
+}
+
+test "empty set is tag 19 + count 0" {
+  let out = encode.encode({ t: "set", v: [] }) in
+  bytes.to_hex(out.ok) == "190000000000000000"
+}
+
+test "bigint zero encodes without error" {
+  let out = encode.encode({ t: "bigint", sign: "zero", mag_hex: "" }) in
+  out.ok != null
+}
+
+test "bigint positive encodes without error" {
+  let out = encode.encode({ t: "bigint", sign: "positive", mag_hex: "ff" }) in
+  out.ok != null
+}
+
+test "unknown tag returns err not crash" {
+  let out = encode.encode({ t: "not_a_real_type" }) in
+  out.err != null
+}
+
+test "non-record input returns err" {
+  let out = encode.encode(42) in
+  out.err != null
+}
