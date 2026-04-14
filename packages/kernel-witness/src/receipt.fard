@@ -2,29 +2,23 @@ import("../../kernel-canon/src/cid") as cid
 import("../../kernel-canon/src/types") as types
 import("std/rec") as rec
 
-fn opt_text(x) {
-  if x == null then { t: "option_none" } else types.make_text(x)
-}
-
-fn opt_int(x) {
-  if x == null then { t: "option_none" } else types.make_int(x)
-}
-
 fn make_receipt(bundle_cid, program_cid, input_cid, result_cid, exit_code, kernel_version, deps_cid, oracle_cid, trace_cid, step_count, parent_digest) {
-  let entries = types.make_list([
-    types.make_record([{ k: "bundle_cid",     v: types.make_text(bundle_cid) }]),
-    types.make_record([{ k: "deps_cid",       v: opt_text(deps_cid) }]),
-    types.make_record([{ k: "exit",           v: types.make_text(exit_code) }]),
-    types.make_record([{ k: "input_cid",      v: types.make_text(input_cid) }]),
-    types.make_record([{ k: "kernel_version", v: types.make_text(kernel_version) }]),
-    types.make_record([{ k: "oracle_cid",     v: opt_text(oracle_cid) }]),
-    types.make_record([{ k: "parent_digest",  v: opt_text(parent_digest) }]),
-    types.make_record([{ k: "program_cid",    v: types.make_text(program_cid) }]),
-    types.make_record([{ k: "result_cid",     v: types.make_text(result_cid) }]),
-    types.make_record([{ k: "step_count",     v: opt_int(step_count) }]),
-    types.make_record([{ k: "trace_cid",      v: opt_text(trace_cid) }])
-  ]) in
-  { t: "receipt", v: entries }
+  {
+    t: "receipt",
+    v: types.make_list([
+      types.make_record([{ k: "bundle_cid",     v: types.make_text(bundle_cid) }]),
+      types.make_record([{ k: "deps_cid",       v: if deps_cid == null then { t: "option_none" } else types.make_text(deps_cid) }]),
+      types.make_record([{ k: "exit",           v: types.make_text(exit_code) }]),
+      types.make_record([{ k: "input_cid",      v: types.make_text(input_cid) }]),
+      types.make_record([{ k: "kernel_version", v: types.make_text(kernel_version) }]),
+      types.make_record([{ k: "oracle_cid",     v: if oracle_cid == null then { t: "option_none" } else types.make_text(oracle_cid) }]),
+      types.make_record([{ k: "parent_digest",  v: if parent_digest == null then { t: "option_none" } else types.make_text(parent_digest) }]),
+      types.make_record([{ k: "program_cid",    v: types.make_text(program_cid) }]),
+      types.make_record([{ k: "result_cid",     v: types.make_text(result_cid) }]),
+      types.make_record([{ k: "step_count",     v: if step_count == null then { t: "option_none" } else types.make_int(step_count) }]),
+      types.make_record([{ k: "trace_cid",      v: if trace_cid == null then { t: "option_none" } else types.make_text(trace_cid) }])
+    ])
+  }
 }
 
 fn receipt_cid(r) {
