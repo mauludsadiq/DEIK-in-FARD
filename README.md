@@ -2,7 +2,9 @@
 
 **Deterministic Execution Kernel** — a canonical binary serialization and execution integrity system implemented in pure FARD.
 
-DEK makes context, program identity, execution, licensing, and chain of custody content-addressable and locally verifiable. Non-determinism is never hidden — every oracle call is typed, sequenced, and witnessed.
+DEK makes context, program identity, execution, licensing, and chain of custody content-addressable and locally verifiable. Non-determinism is never hidden. Every oracle call is typed, sequenced, and witnessed. The full verification predicate is:
+
+    valid_receipt AND licensed AND policy_compliant
 
 ## Quick start
 
@@ -20,6 +22,7 @@ DEK makes context, program identity, execution, licensing, and chain of custody 
     fardrun test --program tests/persist/test_persist.fard
     fardrun test --program tests/replay/test_replay.fard
     fardrun test --program tests/oracle/test_oracle.fard
+    fardrun test --program tests/policy/test_policy.fard
 
 ## Architecture
 
@@ -46,6 +49,8 @@ DEK makes context, program identity, execution, licensing, and chain of custody 
         replay.fard       -- determinism proof via receipt comparison
       kernel-oracle/src/
         oracle.fard       -- canonical oracle boundary: time/random/http/sensor/model/ffi
+      kernel-policy/src/
+        policy.fard       -- policy enforcement: programs/oracles/exits/steps/expiry/revocation
 
 ## Phase ladder
 
@@ -60,11 +65,13 @@ DEK makes context, program identity, execution, licensing, and chain of custody 
     Phase 9  - Persistence       done  persist.fard
     Phase 10 - Replay            done  replay.fard
     Phase 11 - Oracle boundary   done  oracle.fard
-    Phase 12 - Policy layer            kernel-policy (next)
+    Phase 12 - Policy layer      done  policy.fard
+
+    Next: compliance suite, reference demos, whitepaper
 
 ## Test summary
 
-    156 tests, 0 failures
+    183 tests, 0 failures
 
     tests/kernel/test_encode_smoke.fard      2 tests
     tests/kernel/test_encode_vectors.fard   11 tests
@@ -79,6 +86,7 @@ DEK makes context, program identity, execution, licensing, and chain of custody 
     tests/persist/test_persist.fard         14 tests
     tests/replay/test_replay.fard           13 tests
     tests/oracle/test_oracle.fard           22 tests
+    tests/policy/test_policy.fard           27 tests
 
 ## Frozen spec
 
@@ -91,6 +99,18 @@ DEK makes context, program identity, execution, licensing, and chain of custody 
       license_registry_v1.md
       context_v1.md
       persist_v1.md
+      oracle_v1.md
+      policy_v1.md
+
+## Verification
+
+The complete verification predicate:
+
+    valid_receipt(run_id)
+    AND licensed(run_id, program_cid, registry)
+    AND policy_compliant(policy, program_cid, exit_code, oracle_kinds, step_count, now_ms)
+
+Each gate is independent and composable.
 
 ## Execution pipeline
 
@@ -99,104 +119,78 @@ DEK makes context, program identity, execution, licensing, and chain of custody 
 
 Internal phases:
 
-    1. validate_bundle(bundle)               reject malformed bundles early
-    2. cid_of(program), cid_of(input)        content-address all inputs
-    3. evaluator(program, input, config)     caller-supplied execution
-    4. cid_of(result)                        content-address the output
-    5. make_receipt(...)                     form cryptographic witness
-    6. receipt_cid(receipt)                  content-address the receipt itself
+    1. validate_bundle(bundle)
+    2. cid_of(program), cid_of(input)
+    3. evaluator(program, input, config)
+    4. cid_of(result)
+    5. make_receipt(...)
+    6. receipt_cid(receipt)
+
+## Policy enforcement
+
+    enforce(policy, program_cid, exit_code, oracle_kinds, step_count, now_ms)
+    -> { ok: true }
+    -> { ok: false, code, message, phase: "policy.enforce" }
+
+Policy constraints (checked in order):
+
+    revoked          policy has been revoked
+    expires_at       unix ms expiry timestamp
+    allowed_programs list of permitted program CIDs
+    allowed_exits    list of permitted exit codes
+    max_step_count   execution step cap
+    allowed_oracles  list of permitted oracle kinds
+
+null in any list field means allow all.
 
 ## Oracle boundary
 
-Every non-deterministic call produces a canonical oracle_event:
+    oracle_now(seq)
+    oracle_random_int(lo, hi, seq)
+    oracle_random_uuid(seq)
+    oracle_http_get(url, seq)
+    oracle_sensor(name, data, seq)
+    oracle_model_call(model, prompt, response, seq)
 
-    oracle_now(seq)                          -> { ok: { value, event, cid } }
-    oracle_random_int(lo, hi, seq)           -> { ok: { value, event, cid } }
-    oracle_random_uuid(seq)                  -> { ok: { value, event, cid } }
-    oracle_http_get(url, seq)               -> { ok: { value, event, cid } }
-    oracle_sensor(name, data, seq)          -> { ok: { value, event, cid } }
-    oracle_model_call(model, prompt, response, seq) -> { ok: { value, event, cid } }
-
-Oracle events are sequenced, typed, and content-addressed.
-A snapshot of all events from one execution is itself a canonical value.
-
-    make_snapshot([event, ...]) -> canonical list
-    snapshot_cid(snapshot)      -> { ok: "sha256:..." }
-
-Non-determinism is never hidden. Every oracle call is explicit.
+Each returns { ok: { value, event, cid } }.
+Oracle events are sequenced and content-addressed.
+A snapshot of all events is itself a canonical value.
 
 ## Replay
 
     replay_check(program, input, evaluator)
+    -> { ok: { receipt_cid, deterministic: true, runs: 2 } }
 
-Runs the same execution twice and verifies both receipt CIDs match.
-Proves determinism without needing a stored receipt.
-
-    { ok: { receipt_cid, deterministic: true, runs: 2 } }
-    { err: { code: "NON_DETERMINISTIC", first, second } }
+Runs execution twice and verifies receipt CIDs match.
 
 ## Licensing
 
     let registry = license.make_registry(["sha256:...", ...])
     persist.save_registry(registry, "registries/v1.json")
-
     let r = persist.load_registry("registries/v1.json")
-    let gate = license.verify_licensed_chain(run_id, program_cid, r.ok.registry)
-
-    { ok: { run_id, program_cid, registry_cid, chain_depth } }
-    { err: { code: "NOT_LICENSED", ... } }
-
-Remote registry: set FARD_REGISTRY_URL for remote receipt lookup.
+    license.verify_licensed_chain(run_id, program_cid, r.ok.registry)
 
 ## Context integrity
 
     let context = ctx.make_context([msg.ok, ...], "claude-3", turn_count)
     let original_cid = ctx.context_cid(context).ok
     persist.save_context(context, "contexts/session_001.json")
-
     ctx.truncation_check(original_cid, current_context)
-    -- { ok: { cid, verified: true } }
-    -- { err: { code: "CONTEXT_MODIFIED", original, current } }
 
 ## Content addressing
 
-    cid_of(canon_val) -> { ok: "sha256:..." }
-
 Known stable CIDs:
 
-    cid(null)         sha256:6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d
-    cid(bool false)   sha256:4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a
-    cid(bool true)    sha256:dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986
+    cid(null)        sha256:6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d
+    cid(false)       sha256:4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a
+    cid(true)        sha256:dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986
 
 ## Bundle format
 
-Required fields:
-
-    program     { t: "cid", v: "sha256:..." } | { t: "text", v: "<source>" }
-    input       any canonical value
-    trace_mode  "full" | "minimal" | "none"
-
-Optional fields:
-
-    deps        list of { name: text, cid: text } entries
-    oracle      { t: "cid", v: "sha256:..." }
-    config      record of runtime settings
-    version     text
-
-## Receipt format
-
-    make_receipt(
-      bundle_cid, program_cid, input_cid, result_cid,
-      exit_code, kernel_version,
-      deps_cid, oracle_cid, trace_cid, step_count, parent_digest
-    )
-
-Exit codes: "ok" | "err" | "abort"
-Parent digest enables receipt chaining across execution steps.
+Required: program, input, trace_mode
+Optional: deps, oracle, config, version
 
 ## Encoding format
-
-Every encoded value starts with a 1-byte tag.
 
 | Tag | Hex  | Type            | Payload                                              |
 |-----|------|-----------------|------------------------------------------------------|
@@ -228,40 +222,22 @@ Every encoded value starts with a 1-byte tag.
 | 25  | 0x19 | set             | u64_be(count) ++ encode(item)*                       |
 | 26  | 0x1a | receipt         | encode(record v)                                     |
 
-## Canonical value constructors
-
-    make_null()
-    make_bool(b)
-    make_int(n)
-    make_float_bits(hex)
-    make_text(s)
-    make_bytes(bs)
-    make_list(xs)
-    make_record(entries)
-    make_cid(cid)
-    make_set(xs)
-    make_map(entries)
-
 ## Known FARD language behaviour
 
-Inline if/else expressions inside list literals evaluate both branches eagerly.
-Extract conditional logic to helper functions:
+Inline if/else inside list literals evaluates both branches eagerly.
+Extract to helper functions:
 
-    -- Crashes if x is null:
-    { k: "field", v: if x == null then default_val else types.make_text(x) }
-
-    -- Works correctly:
     fn opt_text(x) { if x == null then { t: "option_none" } else types.make_text(x) }
-    { k: "field", v: opt_text(x) }
 
 ## Properties
 
 - Deterministic: same input produces same bytes, always
-- Self-describing: tag byte first, no schema required to parse length
-- Content-addressable: sha256(encode(v)) is a stable CID for any value
-- Evaluator-agnostic: engine accepts any fn(program, input, config) as evaluator
-- Licensable: program CID registries are versioned, persistent, and verifiable
-- Tamper-evident: context truncation and modification are detectable by CID
-- Replayable: determinism is provable by running twice and comparing receipt CIDs
-- Oracle-transparent: every non-deterministic call is typed, sequenced, and witnessed
+- Self-describing: tag byte first, no schema required
+- Content-addressable: sha256(encode(v)) is a stable CID
+- Evaluator-agnostic: engine accepts any fn(program, input, config)
+- Licensable: program CID registries are versioned and verifiable
+- Tamper-evident: context truncation detectable by CID
+- Replayable: determinism provable by running twice
+- Oracle-transparent: every non-deterministic call is witnessed
+- Policy-enforced: programs/oracles/exits/steps/expiry/revocation
 - FARD-native: no external dependencies, runs under fardrun
