@@ -1,0 +1,223 @@
+import("../packages/kernel-exec/src/engine") as engine
+import("../packages/kernel-verify/src/verify") as verify
+import("../packages/kernel-replay/src/replay") as replay
+import("../packages/kernel-license/src/license") as license
+import("../packages/kernel-policy/src/policy") as policy
+import("../packages/kernel-context/src/context") as ctx
+import("../packages/kernel-persist/src/persist") as persist
+import("../packages/kernel-canon/src/types") as types
+import("std/rec") as rec
+import("std/str") as str
+
+// DEK Service Boundary v1
+//
+// Five stable endpoints. Each takes a request record and returns a response.
+//
+//   exec(request)           -- execute a bundle
+//   verify(request)         -- verify a receipt
+//   replay(request)         -- prove determinism
+//   license_check(request)  -- check program is licensed
+//   context_check(request)  -- check context integrity
+//   policy_check(request)   -- check policy compliance
+//
+// Request and response shapes are documented below.
+// All responses follow: { ok: ... } | { err: { code, message, phase } }
+
+// ── exec ──────────────────────────────────────────────────────────────────
+//
+// Request:
+//   { bundle: <bundle>, evaluator: <fn> }
+//
+// Response:
+//   { ok: { receipt_cid, exit, result } }
+//   { err: { code, message, phase, details } }
+
+fn exec(request) {
+  let bundle   = rec.get(request, "bundle") in
+  let evaluator = rec.get(request, "evaluator") in
+  if bundle == null then
+    { err: { code: "MISSING_FIELD", message: "request missing bundle", phase: "service.exec" } }
+  else if evaluator == null then
+    { err: { code: "MISSING_FIELD", message: "request missing evaluator", phase: "service.exec" } }
+  else
+    let result = engine.exec_bundle(bundle, evaluator) in
+    if rec.has(result, "err") then result else
+    { ok: {
+      receipt_cid: result.ok.receipt_cid,
+      exit:        result.ok.exit,
+      result:      result.ok.result
+    } }
+}
+
+// ── verify ────────────────────────────────────────────────────────────────
+//
+// Request:
+//   { run_id: "sha256:..." }
+//   { run_id: "sha256:...", chain: true }
+//
+// Response:
+//   { ok: { run_id, receipt, depth? } }
+//   { err: { code, message } }
+
+fn verify_receipt(request) {
+  let run_id = rec.get(request, "run_id") in
+  let chain  = rec.get(request, "chain") in
+  if run_id == null then
+    { err: { code: "MISSING_FIELD", message: "request missing run_id", phase: "service.verify" } }
+  else if chain == true then
+    let r = verify.verify_chain(run_id) in
+    if rec.has(r, "err") then r else
+    { ok: { run_id: run_id, depth: r.ok.depth } }
+  else
+    let r = verify.verify_receipt(run_id) in
+    if rec.has(r, "err") then r else
+    { ok: { run_id: run_id, receipt: r.ok.receipt } }
+}
+
+// ── replay ────────────────────────────────────────────────────────────────
+//
+// Request:
+//   { program: <canon>, input: <canon>, evaluator: <fn> }
+//
+// Response:
+//   { ok: { receipt_cid, deterministic, runs } }
+//   { err: { code, message } }
+
+fn replay_check(request) {
+  let program   = rec.get(request, "program") in
+  let input     = rec.get(request, "input") in
+  let evaluator = rec.get(request, "evaluator") in
+  if program == null then
+    { err: { code: "MISSING_FIELD", message: "request missing program", phase: "service.replay" } }
+  else if input == null then
+    { err: { code: "MISSING_FIELD", message: "request missing input", phase: "service.replay" } }
+  else if evaluator == null then
+    { err: { code: "MISSING_FIELD", message: "request missing evaluator", phase: "service.replay" } }
+  else
+    replay.replay_check(program, input, evaluator)
+}
+
+// ── license_check ─────────────────────────────────────────────────────────
+//
+// Request:
+//   { program_cid: "sha256:...", registry_path: "..." }
+//   { program_cid: "sha256:...", registry: <canon> }
+//
+// Response:
+//   { ok: { licensed, program_cid, registry_cid } }
+//   { err: { code, message } }
+
+fn license_check(request) {
+  let program_cid    = rec.get(request, "program_cid") in
+  let registry_path  = rec.get(request, "registry_path") in
+  let registry_canon = rec.get(request, "registry") in
+  if program_cid == null then
+    { err: { code: "MISSING_FIELD", message: "request missing program_cid", phase: "service.license_check" } }
+  else
+    let reg_result = if registry_canon != null then
+      { ok: { registry: registry_canon, registry_cid: "inline" } }
+    else if registry_path != null then
+      persist.load_registry(registry_path)
+    else
+      { err: { code: "MISSING_FIELD", message: "request missing registry or registry_path", phase: "service.license_check" } }
+    in
+    if rec.has(reg_result, "err") then reg_result else
+    let licensed = license.is_licensed(program_cid, reg_result.ok.registry) in
+    { ok: {
+      licensed:     licensed,
+      program_cid:  program_cid,
+      registry_cid: reg_result.ok.registry_cid
+    } }
+}
+
+// ── context_check ─────────────────────────────────────────────────────────
+//
+// Request:
+//   { original_cid: "sha256:...", context: <canon> }
+//   { original_cid: "sha256:...", context_path: "..." }
+//
+// Response:
+//   { ok: { verified, cid } }
+//   { err: { code, message, original, current } }
+
+fn context_check(request) {
+  let original_cid  = rec.get(request, "original_cid") in
+  let context_canon = rec.get(request, "context") in
+  let context_path  = rec.get(request, "context_path") in
+  if original_cid == null then
+    { err: { code: "MISSING_FIELD", message: "request missing original_cid", phase: "service.context_check" } }
+  else
+    let ctx_result = if context_canon != null then
+      { ok: { context: context_canon } }
+    else if context_path != null then
+      persist.load_context(context_path)
+    else
+      { err: { code: "MISSING_FIELD", message: "request missing context or context_path", phase: "service.context_check" } }
+    in
+    if rec.has(ctx_result, "err") then ctx_result else
+    ctx.truncation_check(original_cid, ctx_result.ok.context)
+}
+
+// ── policy_check ──────────────────────────────────────────────────────────
+//
+// Request:
+//   { policy: <canon>, program_cid, exit_code, oracle_kinds, step_count, now_ms }
+//
+// Response:
+//   { ok: true }
+//   { ok: false, code, message, phase }
+
+fn policy_check(request) {
+  let p            = rec.get(request, "policy") in
+  let program_cid  = rec.get(request, "program_cid") in
+  let exit_code    = rec.get(request, "exit_code") in
+  let oracle_kinds = rec.get(request, "oracle_kinds") in
+  let step_count   = rec.get(request, "step_count") in
+  let now_ms       = rec.get(request, "now_ms") in
+  if p == null then
+    { err: { code: "MISSING_FIELD", message: "request missing policy", phase: "service.policy_check" } }
+  else if program_cid == null then
+    { err: { code: "MISSING_FIELD", message: "request missing program_cid", phase: "service.policy_check" } }
+  else
+    policy.enforce(
+      p,
+      program_cid,
+      if exit_code == null then "ok" else exit_code,
+      if oracle_kinds == null then [] else oracle_kinds,
+      if step_count == null then 0 else step_count,
+      if now_ms == null then 0 else now_ms
+    )
+}
+
+// ── dispatch ──────────────────────────────────────────────────────────────
+//
+// Route a command to the appropriate endpoint.
+//
+// Request:
+//   { cmd: "exec"|"verify"|"replay"|"license_check"|"context_check"|"policy_check",
+//     ... endpoint-specific fields ... }
+
+fn dispatch(request) {
+  let cmd = rec.get(request, "cmd") in
+  match cmd {
+    "exec"          => exec(request),
+    "verify"        => verify_receipt(request),
+    "replay"        => replay_check(request),
+    "license_check" => license_check(request),
+    "context_check" => context_check(request),
+    "policy_check"  => policy_check(request),
+    _               => { err: { code: "UNKNOWN_COMMAND",
+                                message: str.concat("unknown command: ", str.from(cmd)),
+                                phase: "service.dispatch" } }
+  }
+}
+
+{
+  exec:           exec,
+  verify:         verify_receipt,
+  replay:         replay_check,
+  license_check:  license_check,
+  context_check:  context_check,
+  policy_check:   policy_check,
+  dispatch:       dispatch
+}

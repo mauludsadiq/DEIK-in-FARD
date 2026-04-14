@@ -1,0 +1,187 @@
+import("../service/dek_service") as svc
+import("../packages/kernel-canon/src/types") as types
+import("../packages/kernel-license/src/license") as license
+import("../packages/kernel-context/src/context") as ctx
+import("../packages/kernel-policy/src/policy") as policy
+import("std/rec") as rec
+import("std/str") as str
+
+let known_run_id = "sha256:9009f58955db43ac3ba6bb3e2e27d8d70c1c20bad557bd39e084563148098f1e"
+let unknown_run_id = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+let program_a = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+let program_b = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+fn identity_eval(p, i, c) { { ok: i } }
+
+let good_bundle = {
+  program: { t: "text", v: "test" },
+  input: { t: "null" },
+  trace_mode: "none"
+}
+
+let registry = license.make_registry([program_a])
+let msg = ctx.make_message("user", "hello")
+let sample_ctx = ctx.make_context([msg.ok], "model", 1)
+let ctx_cid = ctx.context_cid(sample_ctx).ok
+
+let open_policy = policy.make_policy(null, null, null, null, null)
+
+// ── exec ──────────────────────────────────────────────────────────────────
+
+test "SVC-EXEC-001: exec returns ok for valid bundle" {
+  let r = svc.exec({ bundle: good_bundle, evaluator: identity_eval }) in
+  rec.has(r, "ok")
+}
+
+test "SVC-EXEC-002: exec ok has receipt_cid" {
+  let r = svc.exec({ bundle: good_bundle, evaluator: identity_eval }) in
+  str.starts_with(r.ok.receipt_cid, "sha256:")
+}
+
+test "SVC-EXEC-003: exec ok has exit" {
+  let r = svc.exec({ bundle: good_bundle, evaluator: identity_eval }) in
+  r.ok.exit == "ok"
+}
+
+test "SVC-EXEC-004: exec err for missing bundle" {
+  let r = svc.exec({ evaluator: identity_eval }) in
+  rec.has(r, "err") && r.err.code == "MISSING_FIELD"
+}
+
+test "SVC-EXEC-005: exec err for missing evaluator" {
+  let r = svc.exec({ bundle: good_bundle }) in
+  rec.has(r, "err") && r.err.code == "MISSING_FIELD"
+}
+
+// ── verify ────────────────────────────────────────────────────────────────
+
+test "SVC-VERIFY-001: verify returns ok for known run_id" {
+  let r = svc.verify({ run_id: known_run_id }) in
+  rec.has(r, "ok")
+}
+
+test "SVC-VERIFY-002: verify ok has run_id" {
+  let r = svc.verify({ run_id: known_run_id }) in
+  r.ok.run_id == known_run_id
+}
+
+test "SVC-VERIFY-003: verify err for unknown run_id" {
+  let r = svc.verify({ run_id: unknown_run_id }) in
+  rec.has(r, "err")
+}
+
+test "SVC-VERIFY-004: verify err for missing run_id" {
+  let r = svc.verify({}) in
+  rec.has(r, "err") && r.err.code == "MISSING_FIELD"
+}
+
+test "SVC-VERIFY-005: verify chain returns depth" {
+  let r = svc.verify({ run_id: known_run_id, chain: true }) in
+  rec.has(r, "ok") && r.ok.depth >= 1
+}
+
+// ── replay ────────────────────────────────────────────────────────────────
+
+test "SVC-REPLAY-001: replay returns ok" {
+  let r = svc.replay({ program: { t: "text", v: "p" }, input: { t: "null" }, evaluator: identity_eval }) in
+  rec.has(r, "ok")
+}
+
+test "SVC-REPLAY-002: replay ok is deterministic" {
+  let r = svc.replay({ program: { t: "text", v: "p" }, input: { t: "null" }, evaluator: identity_eval }) in
+  r.ok.deterministic == true
+}
+
+test "SVC-REPLAY-003: replay err for missing program" {
+  let r = svc.replay({ input: { t: "null" }, evaluator: identity_eval }) in
+  rec.has(r, "err") && r.err.code == "MISSING_FIELD"
+}
+
+// ── license_check ─────────────────────────────────────────────────────────
+
+test "SVC-LICENSE-001: license_check ok for licensed program" {
+  let r = svc.license_check({ program_cid: program_a, registry: registry }) in
+  rec.has(r, "ok") && r.ok.licensed == true
+}
+
+test "SVC-LICENSE-002: license_check ok licensed false for unknown program" {
+  let r = svc.license_check({ program_cid: program_b, registry: registry }) in
+  rec.has(r, "ok") && r.ok.licensed == false
+}
+
+test "SVC-LICENSE-003: license_check err for missing program_cid" {
+  let r = svc.license_check({ registry: registry }) in
+  rec.has(r, "err") && r.err.code == "MISSING_FIELD"
+}
+
+test "SVC-LICENSE-004: license_check err for missing registry" {
+  let r = svc.license_check({ program_cid: program_a }) in
+  rec.has(r, "err") && r.err.code == "MISSING_FIELD"
+}
+
+// ── context_check ─────────────────────────────────────────────────────────
+
+test "SVC-CTX-001: context_check ok when context unchanged" {
+  let r = svc.context_check({ original_cid: ctx_cid, context: sample_ctx }) in
+  rec.has(r, "ok") && r.ok.verified == true
+}
+
+test "SVC-CTX-002: context_check err when context modified" {
+  let modified = ctx.make_context([msg.ok], "other-model", 1) in
+  let r = svc.context_check({ original_cid: ctx_cid, context: modified }) in
+  rec.has(r, "err") && r.err.code == "CONTEXT_MODIFIED"
+}
+
+test "SVC-CTX-003: context_check err for missing original_cid" {
+  let r = svc.context_check({ context: sample_ctx }) in
+  rec.has(r, "err") && r.err.code == "MISSING_FIELD"
+}
+
+// ── policy_check ──────────────────────────────────────────────────────────
+
+test "SVC-POLICY-001: policy_check ok for open policy" {
+  let r = svc.policy_check({ policy: open_policy, program_cid: program_a }) in
+  r.ok == true
+}
+
+test "SVC-POLICY-002: policy_check err for missing policy" {
+  let r = svc.policy_check({ program_cid: program_a }) in
+  rec.has(r, "err") && r.err.code == "MISSING_FIELD"
+}
+
+test "SVC-POLICY-003: policy_check err for revoked policy" {
+  let r = svc.policy_check({ policy: policy.revoke(open_policy), program_cid: program_a }) in
+  r.ok == false && r.code == "POLICY_REVOKED"
+}
+
+// ── dispatch ──────────────────────────────────────────────────────────────
+
+test "SVC-DISPATCH-001: dispatch exec works" {
+  let r = svc.dispatch({ cmd: "exec", bundle: good_bundle, evaluator: identity_eval }) in
+  rec.has(r, "ok")
+}
+
+test "SVC-DISPATCH-002: dispatch verify works" {
+  let r = svc.dispatch({ cmd: "verify", run_id: known_run_id }) in
+  rec.has(r, "ok")
+}
+
+test "SVC-DISPATCH-003: dispatch license_check works" {
+  let r = svc.dispatch({ cmd: "license_check", program_cid: program_a, registry: registry }) in
+  rec.has(r, "ok")
+}
+
+test "SVC-DISPATCH-004: dispatch context_check works" {
+  let r = svc.dispatch({ cmd: "context_check", original_cid: ctx_cid, context: sample_ctx }) in
+  rec.has(r, "ok")
+}
+
+test "SVC-DISPATCH-005: dispatch policy_check works" {
+  let r = svc.dispatch({ cmd: "policy_check", policy: open_policy, program_cid: program_a }) in
+  r.ok == true
+}
+
+test "SVC-DISPATCH-006: dispatch unknown command returns err" {
+  let r = svc.dispatch({ cmd: "unknown_cmd" }) in
+  rec.has(r, "err") && r.err.code == "UNKNOWN_COMMAND"
+}
