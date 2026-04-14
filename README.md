@@ -241,12 +241,16 @@ A snapshot of all events is a canonical value with its own CID.
 | 25  | 0x19 | set             | u64_be(count) ++ encode(item)*                       |
 | 26  | 0x1a | receipt         | encode(record v)                                     |
 
-## Known FARD language behaviour
+## FARD language notes
 
-Inline if/else inside list literals evaluates both branches eagerly.
-Extract to helper functions:
+Inline if/else inside record literals inside list literals inside function bodies
+previously required extraction to helper functions due to a VM stack bug.
+This bug has been fixed in FARD v0.5 (commit 2b705ce).
+Inline conditional values now work correctly:
 
-    fn opt_text(x) { if x == null then { t: "option_none" } else types.make_text(x) }
+    { k: "field", v: if x == null then { t: "option_none" } else types.make_text(x) }
+
+The workaround functions opt_text/opt_int have been removed from receipt.fard.
 
 ## Properties
 
