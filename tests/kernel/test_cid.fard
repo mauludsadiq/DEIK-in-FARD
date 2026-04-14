@@ -1,0 +1,41 @@
+import("../../packages/kernel-canon/src/cid") as cid
+import("../../packages/kernel-canon/src/types") as types
+import("std/str") as str
+import("std/rec") as rec
+
+test "cid_of returns sha256: prefixed string" {
+  let r = cid.cid_of(types.make_null()) in
+  r.ok != null
+}
+
+test "cid_of null starts with sha256:" {
+  let r = cid.cid_of(types.make_null()) in
+  str.starts_with(r.ok, "sha256:")
+}
+
+test "same value same cid" {
+  let a = cid.cid_of(types.make_int(42)) in
+  let b = cid.cid_of(types.make_int(42)) in
+  a.ok == b.ok
+}
+
+test "different values different cid" {
+  let a = cid.cid_of(types.make_int(42)) in
+  let b = cid.cid_of(types.make_int(43)) in
+  a.ok != b.ok
+}
+
+test "cid of null is known digest" {
+  let r = cid.cid_of(types.make_null()) in
+  r.ok == "sha256:6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+}
+
+test "cid of text abc is stable" {
+  let r = cid.cid_of(types.make_text("abc")) in
+  r.ok != null
+}
+
+test "invalid input returns err" {
+  let r = cid.cid_of(42) in
+  rec.has(r, "err")
+}

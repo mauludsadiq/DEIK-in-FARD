@@ -1,0 +1,14 @@
+import("./encode") as encode
+import("std/hash") as hash
+import("std/bytes") as bytes
+import("std/str") as str
+import("std/rec") as rec
+
+fn cid_of(canon_val) {
+  let enc = encode.encode(canon_val) in
+  if !rec.has(enc, "ok") then enc else
+    let digest = hash.sha256(enc.ok) in
+    { ok: str.concat("sha256:", bytes.to_hex(digest)) }
+}
+
+{ cid_of: cid_of }
