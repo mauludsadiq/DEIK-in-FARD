@@ -38,6 +38,14 @@ DEK makes context, program identity, execution, licensing, and chain of custody 
 
 ## Architecture
 
+    docs/
+      Whitepaper.md
+
+    demos/
+      drone/demo_drone.fard       -- autonomous systems: sensor canonicalization, safety policy, replay proof
+      enterprise/demo_enterprise.fard  -- licensing chain: registry, policy, verification, revocation
+      llm/demo_llm.fard           -- LLM integrity: context pinning, oracle witnessing, truncation detection
+
     packages/
       kernel-canon/src/
         encode.fard       -- deterministic serializer (27 tag types)
@@ -79,7 +87,7 @@ DEK makes context, program identity, execution, licensing, and chain of custody 
     Phase 11 - Oracle boundary   done  oracle.fard
     Phase 12 - Policy layer      done  policy.fard
 
-    Next: reference demos, whitepaper, service boundary
+    Next: service boundary
 
 ## Test and compliance summary
 
